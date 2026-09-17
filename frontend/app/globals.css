@@ -1,0 +1,80 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'IBM Plex Sans', sans-serif;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(84, 87, 214, 0.14), transparent 28rem),
+    radial-gradient(circle at 88% 22%, rgba(14, 163, 150, 0.12), transparent 24rem),
+    #F5F5F2;
+  background-attachment: fixed;
+}
+
+.dark body {
+  background:
+    radial-gradient(circle at 12% 8%, rgba(84, 87, 214, 0.2), transparent 28rem),
+    radial-gradient(circle at 88% 22%, rgba(14, 163, 150, 0.14), transparent 24rem),
+    #0E1020;
+}
+
+button, a, input, textarea, select {
+  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+button:hover:not(:disabled), .btn-primary:hover, .btn-secondary:hover {
+  transform: translateY(-1px);
+}
+
+.card {
+  @apply bg-white dark:bg-[#171A33] border border-[#E1E1DC] dark:border-[#2A2E52] rounded-xl;
+}
+
+.btn-primary {
+  @apply bg-primary text-white px-4 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-60;
+}
+
+.btn-secondary {
+  @apply bg-transparent border border-[#E1E1DC] dark:border-[#2A2E52] px-4 py-2.5 rounded-lg text-sm;
+}
+
+.field {
+  @apply w-full bg-[#F5F5F2] dark:bg-[#0E1020] border border-[#E1E1DC] dark:border-[#2A2E52] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-primary;
+}
+
+.label {
+  @apply text-xs text-gray-500 dark:text-gray-400 block mb-1.5;
+}
+
+.error-text {
+  @apply text-red-500 text-xs mt-1 font-medium;
+}
+
+.field-error {
+  @apply border-red-500 focus:border-red-500 bg-red-50 dark:bg-red-950/30;
+}
+
+.form-error {
+  @apply text-red-600 text-sm font-medium bg-red-50 dark:bg-red-950/30 border border-red-300 dark:border-red-800 rounded-lg px-3 py-2.5;
+}
+
+.card-hover {
+  @apply hover:border-primary/60 transition-colors;
+}
+
+.btn-danger {
+  @apply bg-transparent border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-2.5 rounded-lg text-sm;
+}
+
+.btn-live {
+  @apply bg-live text-white px-4 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-60;
+}
+
+.chip {
+  @apply text-xs px-2.5 py-1 rounded-full border border-[#E1E1DC] dark:border-[#2A2E52];
+}
+
+.chip-on {
+  @apply border-primary bg-primary/10 text-primary;
+}
