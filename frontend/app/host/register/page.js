@@ -1,6 +1,11 @@
 "use client";
-import AuthForm from "../../../components/AuthForm";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 
-export default function HostRegisterPage() {
-  return <AuthForm mode="register" />;
+export default function HostRegisterRedirect() {
+  const router = useRouter();
+  useEffect(() => {
+    router.replace("/host/login");
+  }, [router]);
+  return null;
 }

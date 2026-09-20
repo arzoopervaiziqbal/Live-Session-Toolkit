@@ -1,33 +1,32 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getToken, getUser, clearToken, clearUser, tokenIsValid } from "./api";
+import { getToken, getUser, clearToken, clearUser, tokenHasRole } from "./api";
 
-/**
- * Host-only route guard. `ready` stays false until the check has run so pages
- * don't flash unauthenticated content before redirecting.
- */
-export function useAuthGuard(loginPath = "/host/login") {
+// Redirects to the given login path if no token is present for this role.
+// Returns { user, logout, ready } — ready is false until the check has run
+// so pages can avoid a flash of unauthenticated content.
+export function useAuthGuard(role, loginPath) {
   const router = useRouter();
-  const [user, setUser] = useState(null);
+  const [user, setUserState] = useState(null);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const token = getToken();
-    const storedUser = getUser();
-    if (!token || !storedUser || !tokenIsValid(token)) {
-      clearToken();
-      clearUser();
+    const token = getToken(role);
+    const storedUser = getUser(role);
+    if (!token || !storedUser || storedUser.role !== role || !tokenHasRole(token, role)) {
+      clearToken(role);
+      clearUser(role);
       router.replace(loginPath);
       return;
     }
-    setUser(storedUser);
+    setUserState(storedUser);
     setReady(true);
-  }, [loginPath, router]);
+  }, [role, loginPath, router]);
 
   function logout() {
-    clearToken();
-    clearUser();
+    clearToken(role);
+    clearUser(role);
     router.replace(loginPath);
   }
 

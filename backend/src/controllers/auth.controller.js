@@ -1,83 +1,64 @@
 const bcrypt = require("bcryptjs");
-const { supabase, q } = require("../config/db");
+const HostUser = require("../models/HostUser");
+const ParticipantUser = require("../models/ParticipantUser");
 const { signToken } = require("../utils/jwt");
 const { validateRegister, validateLogin } = require("../utils/validators");
-const { httpError } = require("../middleware/error");
 
 const SALT_ROUNDS = 10;
 
-function publicUser(host) {
-  return { id: host.id, name: host.name, email: host.email, role: "host" };
-}
+function makeAuthControllers(Model, role) {
+  async function register(req, res) {
+    const { name, email, password, confirmPassword } = req.body;
+    const errors = validateRegister({ name, email, password, confirmPassword });
+    if (Object.keys(errors).length > 0) {
+      return res.status(400).json({ errors });
+    }
 
-async function register(req, res) {
-  const { name, email, password, confirmPassword } = req.body;
-  const errors = validateRegister({ name, email, password, confirmPassword });
-  if (Object.keys(errors).length) throw httpError(400, "Please fix the highlighted fields.", errors);
+    const normalizedEmail = email.trim().toLowerCase();
+    const existing = await Model.findOne({ where: { email: normalizedEmail } });
+    if (existing) {
+      return res.status(400).json({ errors: { email: "An account with this email already exists." } });
+    }
 
-  const normalizedEmail = email.trim().toLowerCase();
+    const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+    const user = await Model.create({ name: name.trim(), email: normalizedEmail, passwordHash });
 
-  const existing = await q(
-    supabase.from("hosts").select("id").eq("email", normalizedEmail).maybeSingle(),
-    "check existing host"
-  );
-  if (existing) {
-    throw httpError(400, "An account with this email already exists.", {
-      email: "An account with this email already exists.",
-    });
+    const token = signToken({ id: user._id, name: user.name, email: user.email, role });
+    return res.status(201).json({ token, user: { id: user._id, name: user.name, email: user.email, role } });
   }
 
-  const password_hash = await bcrypt.hash(password, SALT_ROUNDS);
-  const host = await q(
-    supabase
-      .from("hosts")
-      .insert({ name: name.trim(), email: normalizedEmail, password_hash })
-      .select("id, name, email")
-      .single(),
-    "create host"
-  );
+  async function login(req, res) {
+    const { email, password } = req.body;
+    const errors = validateLogin({ email, password });
+    if (Object.keys(errors).length > 0) {
+      return res.status(400).json({ errors });
+    }
 
-  const user = publicUser(host);
-  res.status(201).json({ token: signToken(user), user });
-}
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await Model.findOne({ where: { email: normalizedEmail } });
+    if (!user) {
+      return res.status(401).json({ errors: { form: "Email or password is incorrect." } });
+    }
 
-async function login(req, res) {
-  const { email, password } = req.body;
-  const errors = validateLogin({ email, password });
-  if (Object.keys(errors).length) throw httpError(400, "Please fix the highlighted fields.", errors);
+    const match = await bcrypt.compare(password, user.passwordHash);
+    if (!match) {
+      return res.status(401).json({ errors: { form: "Email or password is incorrect." } });
+    }
 
-  const normalizedEmail = email.trim().toLowerCase();
-  const host = await q(
-    supabase
-      .from("hosts")
-      .select("id, name, email, password_hash")
-      .eq("email", normalizedEmail)
-      .maybeSingle(),
-    "find host"
-  );
-
-  // Same message and roughly the same work either way, so the response can't
-  // be used to enumerate which emails have accounts.
-  const hash = host ? host.password_hash : "$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidin";
-  const match = await bcrypt.compare(password, hash);
-
-  if (!host || !match) {
-    throw httpError(401, "Email or password is incorrect.", {
-      form: "Email or password is incorrect.",
-    });
+    const token = signToken({ id: user._id, name: user.name, email: user.email, role });
+    return res.json({ token, user: { id: user._id, name: user.name, email: user.email, role } });
   }
 
-  const user = publicUser(host);
-  res.json({ token: signToken(user), user });
+  async function me(req, res) {
+    const user = await Model.findByPk(req.user.id, { attributes: { exclude: ["passwordHash"] } });
+    if (!user) return res.status(404).json({ error: "User not found." });
+    return res.json({ user: { id: user._id, name: user.name, email: user.email, role } });
+  }
+
+  return { register, login, me };
 }
 
-async function me(req, res) {
-  const host = await q(
-    supabase.from("hosts").select("id, name, email").eq("id", req.user.id).maybeSingle(),
-    "load host"
-  );
-  if (!host) throw httpError(404, "Account not found.");
-  res.json({ user: publicUser(host) });
-}
+const hostAuth = makeAuthControllers(HostUser, "host");
+const participantAuth = makeAuthControllers(ParticipantUser, "participant");
 
-module.exports = { register, login, me };
+module.exports = { hostAuth, participantAuth };

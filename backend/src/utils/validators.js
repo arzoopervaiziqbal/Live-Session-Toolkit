@@ -1,9 +1,18 @@
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-const isValidEmail = (email) => typeof email === "string" && EMAIL_RE.test(email.trim());
-const isValidPassword = (password) => typeof password === "string" && password.length >= 8;
-const isNonEmpty = (value) => typeof value === "string" && value.trim().length > 0;
+function isValidEmail(email) {
+  return typeof email === "string" && EMAIL_RE.test(email.trim());
+}
 
+function isValidPassword(password) {
+  return typeof password === "string" && password.length >= 8;
+}
+
+function isNonEmpty(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+// Validates a registration payload, returns a map of field -> error message.
 function validateRegister({ name, email, password, confirmPassword }) {
   const errors = {};
   if (!isNonEmpty(name)) errors.name = "Name is required.";
@@ -22,17 +31,4 @@ function validateLogin({ email, password }) {
   return errors;
 }
 
-const VALID_CATEGORIES = ["quiz", "poll", "qa"];
-const VALID_DIFFICULTIES = ["easy", "medium", "hard"];
-const VALID_SESSION_STATUSES = ["draft", "active", "ended"];
-
-module.exports = {
-  isValidEmail,
-  isValidPassword,
-  isNonEmpty,
-  validateRegister,
-  validateLogin,
-  VALID_CATEGORIES,
-  VALID_DIFFICULTIES,
-  VALID_SESSION_STATUSES,
-};
+module.exports = { isValidEmail, isValidPassword, isNonEmpty, validateRegister, validateLogin };

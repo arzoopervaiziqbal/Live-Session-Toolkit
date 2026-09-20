@@ -2,267 +2,221 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Navbar from "../../../../components/Navbar";
+import { useLang } from "../../../../contexts/LangContext";
 import { useAuthGuard } from "../../../../lib/useAuthGuard";
 import { api } from "../../../../lib/api";
 
-const CATEGORIES = [
-  { key: "quiz", label: "Quiz", hint: "AI-generated graded questions" },
-  { key: "poll", label: "Polls", hint: "Live opinion votes" },
-  { key: "qa", label: "Q&A", hint: "Questions and comments feed" },
-];
+const CATEGORIES = ["quiz", "poll", "feedback", "qa"];
+const CATEGORY_LABELS = { quiz: "Quiz", poll: "Poll", feedback: "Feedback", qa: "Live Q&A" };
+const DIFFICULTIES = ["easy", "medium", "hard"];
 
 export default function NewSessionPage() {
+  const { t, langLabel } = useLang();
+  const { user, logout, ready } = useAuthGuard("host", "/host/login");
   const router = useRouter();
-  const { user, logout, ready } = useAuthGuard();
 
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [categories, setCategories] = useState(["quiz", "poll", "qa"]);
-
-  const [tab, setTab] = useState("paste");
-  const [notesText, setNotesText] = useState("");
-  const [file, setFile] = useState(null);
-
-  const [type, setType] = useState("quiz");
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState("quiz");
   const [difficulty, setDifficulty] = useState("medium");
   const [questionCount, setQuestionCount] = useState(5);
-
-  const [busy, setBusy] = useState(false);
-  const [step, setStep] = useState("");
+  const [notesTab, setNotesTab] = useState("paste");
+  const [notesText, setNotesText] = useState("");
+  const [file, setFile] = useState(null);
   const [errors, setErrors] = useState({});
-
-  function toggleCategory(key) {
-    setCategories((list) => (list.includes(key) ? list.filter((c) => c !== key) : [...list, key]));
-  }
-
-  const wantsGeneration = categories.includes("quiz") || categories.includes("poll");
-  const hasMaterial = tab === "paste" ? notesText.trim().length > 0 : Boolean(file);
-
-  async function create(generate) {
-    if (busy) return;
-    setErrors({});
-
-    if (!title.trim()) return setErrors({ title: "Give the session a name." });
-    if (!categories.length) return setErrors({ form: "Pick at least one activity type." });
-    if (generate && !hasMaterial) return setErrors({ notes: "Add your notes or upload a file first." });
-
-    setBusy(true);
-    try {
-      setStep("Creating session...");
-      const { session } = await api.createSession({
-        title,
-        description,
-        activeCategories: categories,
-      });
-
-      if (generate) {
-        setStep(file ? "Reading your file..." : "Saving your material...");
-        if (tab === "upload" && file) {
-          await api.uploadNotesFile(session.id, file);
-        } else {
-          await api.uploadNotesText(session.id, notesText);
-        }
-
-        setStep("Generating questions with AI — this takes a few seconds...");
-        try {
-          const genRes = await api.generateActivities(session.id, { type, difficulty, questionCount });
-          if (genRes && genRes.success === false) {
-            router.replace(`/host/sessions/${session.id}/review?ai_error=${encodeURIComponent(genRes.error)}`);
-            return;
-          }
-        } catch (genErr) {
-          console.warn("AI generation failed on creation, navigating to review for manual input:", genErr.message);
-          router.replace(`/host/sessions/${session.id}/review?ai_error=${encodeURIComponent(genErr.message)}`);
-          return;
-        }
-      }
-
-      // Everything lands on the review screen as drafts; nothing is live yet.
-      router.replace(`/host/sessions/${session.id}/review`);
-    } catch (err) {
-      setErrors(err.fieldErrors || { form: err.message });
-      setBusy(false);
-      setStep("");
-    }
-  }
+  const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState("");
 
   if (!ready) return null;
 
+  async function handleCreateManual() {
+    if (!name.trim()) {
+      setErrors({ name: "Give the session a name." });
+      return;
+    }
+    setGenerating(true);
+    setGenError("");
+    try {
+      const { session } = await api.createSession({ title: name.trim() });
+      const { activity } = await api.createActivity(session._id, {
+        title: name.trim(),
+        type: category,
+        difficulty,
+      });
+      await api.addQuestion(activity._id, 1);
+      router.push(`/host/sessions/${session._id}/review?activity=${activity._id}`);
+    } catch (err) {
+      setGenError(err.message || "Failed to create session.");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function handleGenerate() {
+    const errs = {};
+    if (!name.trim()) errs.name = "Give the session a name.";
+    if (notesTab === "paste" && !notesText.trim()) errs.notes = "Add some notes first.";
+    if (notesTab === "upload" && !file) errs.notes = "Choose a file to upload.";
+    setErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+
+    setGenerating(true);
+    setGenError("");
+    try {
+      const { session } = await api.createSession({ title: name.trim() });
+      const { activity } = await api.createActivity(session._id, {
+        title: name.trim(),
+        type: category,
+        difficulty,
+      });
+
+      if (notesTab === "upload") {
+        await api.uploadNotesFile(activity._id, file);
+      } else {
+        await api.uploadNotesText(activity._id, notesText);
+      }
+
+      await api.generateQuestions(activity._id, langLabel, questionCount);
+      router.push(`/host/sessions/${session._id}/review?activity=${activity._id}`);
+    } catch (err) {
+      setGenError(err.message || "Couldn't generate right now. Try again.");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
   return (
     <main className="min-h-screen">
-      <Navbar userName={user?.name} onLogout={logout} />
+      <Navbar userName={user?.name} onLogout={logout} logoutLabel={t.logout_btn} />
 
-      <div className="max-w-2xl mx-auto px-5 py-8">
-        <button className="text-xs text-gray-500 hover:text-primary mb-4" onClick={() => router.back()}>
-          ← Back
-        </button>
+      <div className="max-w-xl mx-auto px-6 py-8">
+        <h1 className="font-display text-xl font-bold mb-6">{t.new_session_title}</h1>
 
-        <h1 className="font-display text-2xl font-bold mb-6">New session</h1>
+        <label className="label">{t.session_name_label}</label>
+        <input className="field mb-1" value={name} onChange={(e) => setName(e.target.value)} />
+        {errors.name && <div className="error-text mb-3">{errors.name}</div>}
+        <div className="mb-5" />
 
-        {errors.form && <div className="form-error mb-4">{errors.form}</div>}
-
-        {/* ---- Basics ---- */}
-        <div className="card p-5 mb-4">
-          <div className="mb-4">
-            <label className="label" htmlFor="title">
-              Session name
-            </label>
-            <input
-              id="title"
-              className={`field ${errors.title ? "field-error" : ""}`}
-              value={title}
-              placeholder="e.g. Week 4 — Neural Networks"
-              onChange={(e) => setTitle(e.target.value)}
-            />
-            {errors.title && <div className="error-text">{errors.title}</div>}
-          </div>
-
-          <div>
-            <label className="label" htmlFor="description">
-              Description <span className="text-gray-400">(optional)</span>
-            </label>
-            <input
-              id="description"
-              className="field"
-              value={description}
-              placeholder="Shown to you only"
-              onChange={(e) => setDescription(e.target.value)}
-            />
-          </div>
-        </div>
-
-        {/* ---- Categories ---- */}
-        <div className="card p-5 mb-4">
-          <div className="label mb-2.5">Which tools do you want in this session?</div>
-          <div className="grid gap-2">
-            {CATEGORIES.map((c) => {
-              const on = categories.includes(c.key);
-              return (
-                <button
-                  key={c.key}
-                  type="button"
-                  onClick={() => toggleCategory(c.key)}
-                  className={`flex items-center gap-3 p-3 rounded-lg border text-left ${
-                    on ? "border-primary bg-primary/5" : "border-[#E1E1DC] dark:border-[#2A2E52]"
-                  }`}
-                >
-                  <span
-                    className={`w-4 h-4 rounded border flex items-center justify-center text-[10px] text-white shrink-0 ${
-                      on ? "bg-primary border-primary" : "border-gray-400"
-                    }`}
-                  >
-                    {on ? "✓" : ""}
-                  </span>
-                  <span className="min-w-0">
-                    <span className="text-sm font-semibold block">{c.label}</span>
-                    <span className="text-xs text-gray-500">{c.hint}</span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* ---- Material + AI ---- */}
-        {wantsGeneration && (
-          <div className="card p-5 mb-4">
-            <div className="label mb-2.5">Your session material</div>
-
-            <div className="flex gap-1 p-1 bg-[#F5F5F2] dark:bg-[#0E1020] rounded-lg border border-[#E1E1DC] dark:border-[#2A2E52] mb-3">
-              {[
-                ["paste", "Paste text"],
-                ["upload", "Upload file"],
-              ].map(([key, label]) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setTab(key)}
-                  className={`flex-1 text-xs py-2 rounded-md ${tab === key ? "bg-primary text-white" : "text-gray-500"}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            {tab === "paste" ? (
-              <textarea
-                className={`field min-h-[160px] resize-y ${errors.notes ? "field-error" : ""}`}
-                value={notesText}
-                placeholder="Paste your lecture notes, slide content, or outline here..."
-                onChange={(e) => setNotesText(e.target.value)}
-              />
-            ) : (
-              <div>
-                <input
-                  type="file"
-                  accept=".pdf,.docx,.txt,.md"
-                  onChange={(e) => setFile(e.target.files?.[0] || null)}
-                  className="field cursor-pointer file:mr-3 file:py-1 file:px-3 file:rounded-md file:border-0 file:bg-primary file:text-white file:text-xs file:cursor-pointer"
-                />
-                <div className="text-xs text-gray-500 mt-1.5">PDF, DOCX, TXT, or MD — up to 15MB</div>
-              </div>
-            )}
-            {errors.notes && <div className="error-text">{errors.notes}</div>}
-
-            <div className="grid sm:grid-cols-3 gap-3 mt-4">
-              <div>
-                <label className="label">Generate</label>
-                <select className="field" value={type} onChange={(e) => setType(e.target.value)}>
-                  <option value="quiz">Quiz questions</option>
-                  <option value="poll">Poll questions</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="label">Difficulty</label>
-                <select
-                  className="field"
-                  value={difficulty}
-                  disabled={type === "poll"}
-                  onChange={(e) => setDifficulty(e.target.value)}
-                >
-                  <option value="easy">Easy</option>
-                  <option value="medium">Medium</option>
-                  <option value="hard">Hard</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="label">How many?</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={20}
-                  className="field"
-                  value={questionCount}
-                  onChange={(e) => setQuestionCount(e.target.value)}
-                />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {busy && step && (
-          <div className="card p-4 mb-4 flex items-center gap-3 text-sm">
-            <span className="w-4 h-4 rounded-full border-2 border-primary border-t-transparent animate-spin shrink-0" />
-            {step}
-          </div>
-        )}
-
-        <div className="flex gap-2.5 flex-wrap">
-          {wantsGeneration && (
-            <button className="btn-primary" disabled={busy} onClick={() => create(true)}>
-              {busy ? "Working..." : "Create & generate with AI"}
+        <label className="label">{t.category_label}</label>
+        <div className="grid grid-cols-2 gap-2 mb-5">
+          {CATEGORIES.map((c) => (
+            <button
+              type="button"
+              key={c}
+              onClick={() => setCategory(c)}
+              className={`text-left p-3 rounded-lg border text-sm ${
+                category === c ? "border-primary bg-primary/10" : "border-[#E1E1DC] dark:border-[#2A2E52]"
+              }`}
+            >
+              {CATEGORY_LABELS[c]}
             </button>
-          )}
-          <button className="btn-secondary" disabled={busy} onClick={() => create(false)}>
-            Create empty session
+          ))}
+        </div>
+
+        <label className="label">{t.difficulty_label}</label>
+        <div className="flex gap-2 mb-5">
+          {DIFFICULTIES.map((d) => (
+            <button
+              type="button"
+              key={d}
+              onClick={() => setDifficulty(d)}
+              className={`flex-1 py-2 rounded-lg border text-sm capitalize ${
+                difficulty === d ? "border-primary bg-primary/10" : "border-[#E1E1DC] dark:border-[#2A2E52]"
+              } ${category !== "quiz" ? "opacity-50" : ""}`}
+            >
+              {t[d]}
+            </button>
+          ))}
+        </div>
+        {category !== "quiz" && (
+          <div className="text-[11px] text-gray-400 -mt-3 mb-5">Difficulty mainly affects quiz questions.</div>
+        )}
+
+        <label className="label">{t.question_count_label}</label>
+        <div className="flex items-center gap-3 mb-5">
+          <input
+            type="range"
+            min={1}
+            max={20}
+            step={1}
+            value={questionCount}
+            onChange={(e) => setQuestionCount(Number(e.target.value))}
+            className="flex-1"
+          />
+          <input
+            type="number"
+            min={1}
+            max={20}
+            value={questionCount}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              if (Number.isFinite(n)) setQuestionCount(Math.min(20, Math.max(1, n)));
+            }}
+            className="field w-16 text-center py-1.5"
+          />
+        </div>
+
+        <label className="label">{t.notes_label}</label>
+        <div className="flex bg-[#F5F5F2] dark:bg-[#0E1020] rounded-lg p-1 border border-[#E1E1DC] dark:border-[#2A2E52] mb-3 w-fit">
+          <button
+            type="button"
+            onClick={() => setNotesTab("paste")}
+            className={`text-xs px-4 py-2 rounded-md ${notesTab === "paste" ? "bg-primary text-white" : "text-gray-500"}`}
+          >
+            {t.notes_paste_tab}
+          </button>
+          <button
+            type="button"
+            onClick={() => setNotesTab("upload")}
+            className={`text-xs px-4 py-2 rounded-md ${notesTab === "upload" ? "bg-primary text-white" : "text-gray-500"}`}
+          >
+            {t.notes_upload_tab}
           </button>
         </div>
 
-        <p className="text-xs text-gray-500 mt-3">
-          Generated questions arrive as drafts. You review and edit them before anything reaches participants.
-        </p>
+        {notesTab === "paste" ? (
+          <textarea
+            className="field mb-1"
+            rows={7}
+            value={notesText}
+            onChange={(e) => setNotesText(e.target.value)}
+          />
+        ) : (
+          <div className="card border-dashed p-6 text-center mb-1">
+            <input
+              type="file"
+              accept=".pdf,.docx,.txt,.md"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+              className="hidden"
+              id="notes-file-input"
+            />
+            <label htmlFor="notes-file-input" className="btn-secondary inline-block cursor-pointer">
+              {t.choose_file}
+            </label>
+            <div className="text-[11px] text-gray-400 mt-2">{t.upload_hint}</div>
+            {file && <div className="text-xs mt-2 font-mono">{file.name}</div>}
+          </div>
+        )}
+        {errors.notes && <div className="error-text mb-3">{errors.notes}</div>}
+        <div className="mb-6" />
+
+        {genError && <div className="error-text mb-4">{genError}</div>}
+
+        <div className="flex flex-wrap gap-3">
+          <button className="btn-secondary" onClick={() => router.push("/host/dashboard")}>
+            {t.back_btn}
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={handleCreateManual}
+            disabled={generating}
+          >
+            Create without AI
+          </button>
+          <button className="btn-primary" onClick={handleGenerate} disabled={generating}>
+            {generating ? t.generating : t.generate_btn}
+          </button>
+        </div>
       </div>
     </main>
   );

@@ -1,107 +1,168 @@
 "use client";
 import { useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { api, setToken, setUser } from "../lib/api";
-import SettingsMenu from "./SettingsMenu";
+import { useLang } from "../contexts/LangContext";
 
-export default function AuthForm({ mode = "login" }) {
-  const router = useRouter();
-  const isRegister = mode === "register";
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-  const [form, setForm] = useState({ name: "", email: "", password: "", confirmPassword: "" });
+// Shared login/register form used by both host and participant auth pages.
+// onSubmit(mode, { name, email, password }) should throw an object with
+// { errors: { field: message } } on failure (matching the API's error shape).
+export default function AuthForm({ title, onSubmit }) {
+  const { t } = useLang();
+  const [mode, setMode] = useState("login");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [errors, setErrors] = useState({});
-  const [busy, setBusy] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
-  function update(field, value) {
-    setForm((f) => ({ ...f, [field]: value }));
-    // Clear the error as soon as they start fixing it, rather than making them
-    // resubmit to find out whether it's resolved.
-    if (errors[field]) setErrors((e) => ({ ...e, [field]: null }));
+  function clearError(field) {
+    if (errors[field]) setErrors((prev) => ({ ...prev, [field]: undefined }));
   }
 
-  async function submit(e) {
-    e.preventDefault();
-    if (busy) return;
-    setBusy(true);
+  function switchMode(next) {
+    setMode(next);
     setErrors({});
+    setPassword("");
+    setConfirmPassword("");
+  }
 
+  function validateClientSide() {
+    const errs = {};
+    if (mode === "register" && !name.trim()) errs.name = "Enter your name.";
+    if (!EMAIL_RE.test(email.trim())) errs.email = "Enter a valid email address.";
+    if (password.length < 8) errs.password = "Password needs at least 8 characters.";
+    if (mode === "register" && password !== confirmPassword) errs.confirmPassword = "Passwords don't match.";
+    return errs;
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const clientErrors = validateClientSide();
+    if (Object.keys(clientErrors).length > 0) {
+      setErrors(clientErrors);
+      return;
+    }
+
+    setSubmitting(true);
     try {
-      const data = isRegister ? await api.register(form) : await api.login(form);
-      setToken(data.token);
-      setUser(data.user);
-      router.replace("/host/dashboard");
+      await onSubmit(mode, { name: name.trim(), email: email.trim(), password, confirmPassword });
     } catch (err) {
-      setErrors(err.fieldErrors || { form: err.message });
+      const apiErrors = err.body?.errors || { form: err.message };
+      setErrors(apiErrors);
     } finally {
-      setBusy(false);
+      setSubmitting(false);
     }
   }
 
-  const field = (name, label, type = "text", placeholder = "") => (
-    <div>
-      <label className="label" htmlFor={name}>
-        {label}
-      </label>
-      <input
-        id={name}
-        type={type}
-        className={`field ${errors[name] ? "field-error" : ""}`}
-        value={form[name]}
-        placeholder={placeholder}
-        autoComplete={
-          name === "password" ? (isRegister ? "new-password" : "current-password") : name === "email" ? "email" : "off"
-        }
-        onChange={(e) => update(name, e.target.value)}
-      />
-      {errors[name] && <div className="error-text">{errors[name]}</div>}
-    </div>
-  );
-
   return (
-    <main className="min-h-screen flex flex-col">
-      <div className="flex justify-between items-center px-6 py-4">
-        <Link href="/" className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-primary text-white flex items-center justify-center font-display font-bold text-sm">
-            L
-          </div>
-          <div className="font-display font-bold">LiveHub</div>
-        </Link>
-        <SettingsMenu />
+    <div className="max-w-sm w-full mx-auto">
+      <h1 className="font-display text-xl font-bold text-center mb-5">{title}</h1>
+
+      <div className="flex bg-[#F5F5F2] dark:bg-[#0E1020] rounded-lg p-1 border border-[#E1E1DC] dark:border-[#2A2E52] mb-6">
+        <button
+          type="button"
+          onClick={() => switchMode("login")}
+          className={`flex-1 text-xs py-2 rounded-md ${mode === "login" ? "bg-primary text-white" : "text-gray-500"}`}
+        >
+          {t.tab_login}
+        </button>
+        <button
+          type="button"
+          onClick={() => switchMode("register")}
+          className={`flex-1 text-xs py-2 rounded-md ${mode === "register" ? "bg-primary text-white" : "text-gray-500"}`}
+        >
+          {t.tab_register}
+        </button>
       </div>
 
-      <div className="flex-1 flex items-center justify-center px-6 pb-16">
-        <form onSubmit={submit} className="card p-6 w-full max-w-sm">
-          <h1 className="font-display text-xl font-bold mb-1">
-            {isRegister ? "Create your host account" : "Log in as host"}
-          </h1>
-          <p className="text-xs text-gray-500 mb-5">
-            Participants don&apos;t need an account — they join with a code.
-          </p>
-
-          {errors.form && <div className="form-error mb-4">{errors.form}</div>}
-
-          <div className="grid gap-3.5">
-            {isRegister && field("name", "Full name", "text", "e.g. Jordan Ali")}
-            {field("email", "Email", "email", "you@example.com")}
-            {field("password", "Password", "password", "At least 8 characters")}
-            {isRegister && field("confirmPassword", "Confirm password", "password", "Re-enter your password")}
+      <form onSubmit={handleSubmit} noValidate>
+        {mode === "register" && (
+          <div className="mb-4">
+            <label className="label">{t.name_label}</label>
+            <input
+              className={`field ${errors.name ? "field-error" : ""}`}
+              placeholder={t.name_placeholder}
+              value={name}
+              aria-invalid={!!errors.name}
+              onChange={(e) => {
+                setName(e.target.value);
+                clearError("name");
+              }}
+            />
+            {errors.name && <div className="error-text" role="alert">{errors.name}</div>}
           </div>
+        )}
 
-          <button className="btn-primary w-full mt-5" disabled={busy}>
-            {busy ? "Please wait..." : isRegister ? "Create account" : "Log in"}
-          </button>
+        <div className="mb-4">
+          <label className="label">{t.email_label}</label>
+          <input
+            type="email"
+            className={`field ${errors.email ? "field-error" : ""}`}
+            placeholder={t.email_placeholder}
+            value={email}
+            aria-invalid={!!errors.email}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              clearError("email");
+            }}
+          />
+          {errors.email && <div className="error-text" role="alert">{errors.email}</div>}
+        </div>
 
-          <div className="text-center mt-4">
-            <Link
-              href={isRegister ? "/host/login" : "/host/register"}
-              className="text-xs text-primary hover:underline"
-            >
-              {isRegister ? "Already have an account? Log in" : "New here? Create an account"}
-            </Link>
+        <div className="mb-4">
+          <label className="label">{t.password_label}</label>
+          <input
+            type="password"
+            className={`field ${errors.password ? "field-error" : ""}`}
+            placeholder={t.password_placeholder}
+            value={password}
+            aria-invalid={!!errors.password}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              clearError("password");
+            }}
+          />
+          {errors.password && <div className="error-text" role="alert">{errors.password}</div>}
+        </div>
+
+        {mode === "register" && (
+          <div className="mb-4">
+            <label className="label">{t.confirm_password_label}</label>
+            <input
+              type="password"
+              className={`field ${errors.confirmPassword ? "field-error" : ""}`}
+              placeholder={t.confirm_password_placeholder}
+              value={confirmPassword}
+              aria-invalid={!!errors.confirmPassword}
+              onChange={(e) => {
+                setConfirmPassword(e.target.value);
+                clearError("confirmPassword");
+              }}
+            />
+            {errors.confirmPassword && <div className="error-text" role="alert">{errors.confirmPassword}</div>}
           </div>
-        </form>
-      </div>
-    </main>
+        )}
+
+        {errors.form && (
+          <div className="form-error mb-4" role="alert">
+            {errors.form}
+          </div>
+        )}
+
+        <button type="submit" disabled={submitting} className="btn-primary w-full">
+          {mode === "login" ? t.login_btn : t.register_btn}
+        </button>
+      </form>
+
+      <button
+        type="button"
+        onClick={() => switchMode(mode === "login" ? "register" : "login")}
+        className="text-xs text-gray-500 w-full text-center mt-4"
+      >
+        {mode === "login" ? t.switch_to_register : t.switch_to_login}
+      </button>
+    </div>
   );
 }

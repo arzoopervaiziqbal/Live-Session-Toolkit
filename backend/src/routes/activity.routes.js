@@ -1,17 +1,21 @@
 const express = require("express");
 const { requireHost } = require("../middleware/auth");
-const asyncHandler = require("../middleware/asyncHandler");
+const upload = require("../middleware/upload");
 const ctrl = require("../controllers/activity.controller");
 
 const router = express.Router();
-router.use(requireHost);
 
-router.patch("/:id", asyncHandler(ctrl.updateActivity));
-router.delete("/:id", asyncHandler(ctrl.deleteActivity));
-router.post("/:id/unpublish", asyncHandler(ctrl.unpublishActivity));
-router.post("/:id/push", asyncHandler(ctrl.pushActivity));
-router.post("/:id/close", asyncHandler(ctrl.closeActivity));
-router.post("/:id/end", asyncHandler(ctrl.endActivity));
-router.get("/:id/results", asyncHandler(ctrl.getActivityResults));
+router.use(requireHost);
+router.post("/sessions/:sessionId/activities", ctrl.createActivity);
+router.post("/activities/:id/upload-notes", upload.single("file"), ctrl.uploadNotes);
+router.patch("/activities/:id", ctrl.updateActivity);
+router.post("/activities/:id/generate", ctrl.generate);
+router.post("/activities/:id/questions", ctrl.addQuestion);
+router.patch("/activities/:id/questions/:qId", ctrl.updateQuestion);
+router.delete("/activities/:id/questions/:qId", ctrl.removeQuestion);
+router.post("/activities/:id/publish", ctrl.publish);
+router.post("/activities/:id/close", ctrl.closeActivity);
+router.get("/activities/:id/results", ctrl.getResults);
+router.get("/activities/:id/export", ctrl.exportCsv);
 
 module.exports = router;

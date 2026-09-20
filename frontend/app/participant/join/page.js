@@ -1,153 +1,136 @@
 "use client";
-import { useState, useEffect, Suspense } from "react";
-import Link from "next/link";
+import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import SettingsMenu from "../../../components/SettingsMenu";
-import { api, getGuestId } from "../../../lib/api";
+import Navbar from "../../../components/Navbar";
+import { useLang } from "../../../contexts/LangContext";
+import { api } from "../../../lib/api";
 
-function JoinForm() {
-  const router = useRouter();
-  const params = useSearchParams();
-
-  const [code, setCode] = useState("");
-  const [name, setName] = useState("");
-  const [error, setError] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [preview, setPreview] = useState(null);
-
-  // Prefill from a shared link (?code=ABC123) and remember the name so a
-  // participant rejoining after a disconnect doesn't retype it.
-  useEffect(() => {
-    const fromUrl = params.get("code");
-    if (fromUrl) setCode(fromUrl.toUpperCase());
-    const saved = localStorage.getItem("lst_display_name");
-    if (saved) setName(saved);
-  }, [params]);
-
-  // Confirm the code exists before asking for a name — faster failure.
-  useEffect(() => {
-    const clean = code.replace(/[^A-Za-z0-9]/g, "");
-    if (clean.length < 6) {
-      setPreview(null);
-      return;
-    }
-    let cancelled = false;
-    const timer = setTimeout(async () => {
-      try {
-        const data = await api.lookupSession(clean);
-        if (!cancelled) {
-          setPreview(data.session);
-          setError(null);
-        }
-      } catch {
-        if (!cancelled) setPreview(null);
-      }
-    }, 350);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [code]);
-
-  async function join(e) {
-    e.preventDefault();
-    if (busy) return;
-
-    const cleanCode = code.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-    if (!cleanCode) return setError("Enter the session code.");
-    if (!name.trim()) return setError("Enter your name so the host can see your score.");
-
-    setBusy(true);
-    setError(null);
-    try {
-      const data = await api.joinSession({
-        code: cleanCode,
-        name: name.trim(),
-        guestId: getGuestId(),
-      });
-
-      localStorage.setItem("lst_display_name", name.trim());
-      localStorage.setItem(
-        `lst_participant_${data.session.id}`,
-        JSON.stringify({ participantId: data.participant.id, sessionId: data.session.id })
-      );
-
-      router.replace(`/participant/room/${data.session.sessionCode}`);
-    } catch (err) {
-      setError(err.message);
-      setBusy(false);
-    }
+function getOrCreateGuestId() {
+  let id = sessionStorage.getItem("sp_guest_id");
+  if (!id) {
+    id = crypto.randomUUID();
+    sessionStorage.setItem("sp_guest_id", id);
   }
-
-  return (
-    <main className="min-h-screen flex flex-col">
-      <div className="flex justify-between items-center px-6 py-4">
-        <Link href="/" className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-primary text-white flex items-center justify-center font-display font-bold text-sm">
-            L
-          </div>
-          <div className="font-display font-bold">LiveHub</div>
-        </Link>
-        <SettingsMenu />
-      </div>
-
-      <div className="flex-1 flex items-center justify-center px-6 pb-16">
-        <form onSubmit={join} className="card p-6 w-full max-w-sm">
-          <h1 className="font-display text-xl font-bold mb-1">Join a session</h1>
-          <p className="text-xs text-gray-500 mb-5">No account needed.</p>
-
-          {error && <div className="form-error mb-4">{error}</div>}
-
-          <div className="mb-3.5">
-            <label className="label" htmlFor="code">
-              Session code
-            </label>
-            <input
-              id="code"
-              className="field font-mono tracking-[0.3em] text-center text-lg uppercase"
-              value={code}
-              maxLength={12}
-              placeholder="ABC123"
-              autoCapitalize="characters"
-              autoComplete="off"
-              onChange={(e) => setCode(e.target.value.toUpperCase())}
-            />
-            {preview && (
-              <div className="text-xs text-live mt-1.5 text-center">
-                {preview.title}
-                {preview.status === "ended" && " — this session has ended"}
-              </div>
-            )}
-          </div>
-
-          <div className="mb-5">
-            <label className="label" htmlFor="name">
-              Your name
-            </label>
-            <input
-              id="name"
-              className="field"
-              value={name}
-              maxLength={60}
-              placeholder="e.g. Sara K."
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-
-          <button className="btn-primary w-full" disabled={busy}>
-            {busy ? "Joining..." : "Join session"}
-          </button>
-        </form>
-      </div>
-    </main>
-  );
+  return id;
 }
 
 export default function JoinPage() {
   return (
     <Suspense fallback={null}>
-      <JoinForm />
+      <JoinPageInner />
     </Suspense>
+  );
+}
+
+function JoinPageInner() {
+  const { t } = useLang();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const [code, setCode] = useState("");
+  const [name, setName] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const prefill = searchParams.get("code");
+    if (prefill) setCode(prefill);
+    // Restore name from this browser tab if already set
+    const savedName = sessionStorage.getItem("sp_guest_name");
+    if (savedName) setName(savedName);
+  }, [searchParams]);
+
+  async function handleFind() {
+    let inputName = name.trim();
+    let inputCode = code.trim();
+
+    // Smart detection: if code field is empty, but name field contains a code (e.g. 8-char hex or URL or UUID)
+    if (!inputCode && inputName && (inputName.length === 8 || inputName.includes("code=") || inputName.length >= 32)) {
+      inputCode = inputName;
+      inputName = sessionStorage.getItem("sp_guest_name") || "Guest";
+      setCode(inputCode);
+      setName(inputName);
+    }
+
+    if (!inputName) {
+      inputName = "Guest";
+    }
+
+    let cleanCode = inputCode;
+    if (cleanCode.includes("code=")) {
+      try {
+        const u = new URL(cleanCode.startsWith("http") ? cleanCode : `http://dummy.com/${cleanCode}`);
+        const c = u.searchParams.get("code");
+        if (c) cleanCode = c.trim();
+      } catch (_) {}
+    }
+    if (cleanCode.includes("/")) {
+      const parts = cleanCode.split("/").filter(Boolean);
+      cleanCode = parts[parts.length - 1].split("?")[0];
+    }
+    cleanCode = cleanCode.replace(/^#/, "").trim();
+
+    if (!cleanCode) {
+      setError("Please enter the session code (e.g. 62c4e730).");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    try {
+      const guestId = getOrCreateGuestId();
+      sessionStorage.setItem("sp_guest_name", inputName);
+      const data = await api.joinByCode(cleanCode, guestId, inputName);
+      const officialCode = data.activity?.linkId || cleanCode;
+      router.push(`/participant/attempt/${officialCode}`);
+    } catch (err) {
+      setError(err.body?.error || "No live session with that code.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <main className="min-h-screen">
+      <Navbar userName={name || undefined} logoutLabel={undefined} />
+
+      <div className="max-w-sm mx-auto px-6 py-16">
+        <h1 className="font-display text-2xl font-bold mb-2 text-center">{t.join_title}</h1>
+        <p className="text-xs text-gray-500 mb-6 text-center">Enter your name and the session code to join</p>
+
+        <div className="space-y-4">
+          <div>
+            <label className="label block mb-1.5 font-medium">Your Name</label>
+            <input
+              className="field"
+              placeholder="e.g. Alex"
+              value={name}
+              onChange={(e) => { setName(e.target.value); setError(""); }}
+            />
+          </div>
+
+          <div>
+            <label className="label block mb-1.5 font-medium">Session Code</label>
+            <input
+              className={`field font-mono text-center tracking-wider text-base font-bold ${error ? "field-error" : ""}`}
+              value={code}
+              aria-invalid={!!error}
+              onChange={(e) => { setCode(e.target.value); setError(""); }}
+              placeholder="e.g. 62c4e730"
+            />
+          </div>
+
+          {error && (
+            <div className="error-text text-center text-xs" role="alert">
+              {error}
+            </div>
+          )}
+
+          <button className="btn-primary w-full py-2.5 mt-2" onClick={handleFind} disabled={loading}>
+            {loading ? "Finding session…" : t.join_btn}
+          </button>
+        </div>
+      </div>
+    </main>
   );
 }

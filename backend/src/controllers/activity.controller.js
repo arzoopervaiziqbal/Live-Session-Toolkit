@@ -1,542 +1,587 @@
-const { supabase, q } = require("../config/db");
-const { httpError } = require("../middleware/error");
-const { ownedSession } = require("./session.controller");
-const { generateActivities, clampQuestionCount } = require("../services/ai.service");
-const {
-  getActivityTally,
-  getLeaderboard,
-  getDetailedLeaderboard,
-  getPollStudentVotes,
-} = require("../services/scoring.service");
-const { VALID_DIFFICULTIES } = require("../utils/validators");
-const realtime = require("../realtime/gateway");
+// const Session = require("../models/Session");
+// const Activity = require("../models/Activity");
+// const Participant = require("../models/Participant");
+// const Response = require("../models/Response");
+// const { generateLinkCode } = require("../utils/generateLink");
+// const { extractTextFromFile } = require("../services/fileParser.service");
+// const { generateQuestions, clampQuestionCount } = require("../services/ai.service");
 
-async function ownedActivity(activityId, hostId) {
-  const activity = await q(
-    supabase.from("activities").select("*").eq("id", activityId).maybeSingle(),
-    "load activity"
-  );
-  if (!activity) throw httpError(404, "Question not found.");
-  const session = await ownedSession(activity.session_id, hostId);
-  return { activity, session };
-}
+// const VALID_CATEGORIES = ["quiz", "poll", "feedback", "qa"];
+// const VALID_DIFFICULTIES = ["easy", "medium", "hard"];
 
-async function nextOrderIndex(sessionId) {
-  const rows = await q(
-    supabase
-      .from("activities")
-      .select("order_index")
-      .eq("session_id", sessionId)
-      .order("order_index", { ascending: false })
-      .limit(1),
-    "read max order index"
-  );
-  return rows.length ? rows[0].order_index + 1 : 0;
-}
+// async function createActivity(req, res) {
+//   const session = await Session.findOne({ where: { _id: req.params.sessionId, hostId: req.user.id } });
+//   if (!session) return res.status(404).json({ error: "Session not found." });
 
-// ---------------------------------------------------------------------------
-// AI generation
-// ---------------------------------------------------------------------------
+//   const { title, type, difficulty } = req.body;
+//   if (!VALID_CATEGORIES.includes(type)) {
+//     return res.status(400).json({ errors: { type: "Choose a valid activity type." } });
+//   }
+//   const chosenDifficulty = VALID_DIFFICULTIES.includes(difficulty) ? difficulty : "medium";
 
-// POST /api/sessions/:sessionId/activities/generate
-async function generate(req, res) {
-  const session = await ownedSession(req.params.sessionId, req.user.id);
+//   const activity = await Activity.create({
+//     sessionId: session._id,
+//     hostId: req.user.id,
+//     type,
+//     title: title && title.trim() ? title.trim() : session.title,
+//     difficulty: chosenDifficulty,
+//     linkId: generateLinkCode(),
+//     questions: [],
+//     status: "draft",
+//   });
 
-  const notesText = (req.body.notesText || session.source_notes_text || "").trim();
-  if (!notesText) throw httpError(400, "Upload or paste your session material before generating.");
+//   res.status(201).json({ activity });
+// }
 
-  const type = req.body.type === "poll" ? "poll" : "quiz";
-  const difficulty = VALID_DIFFICULTIES.includes(req.body.difficulty) ? req.body.difficulty : "medium";
-  const questionCount = clampQuestionCount(req.body.questionCount);
-  const language = typeof req.body.language === "string" ? req.body.language : "English";
-  const fileHash = req.body.fileHash || undefined;
+// async function uploadNotes(req, res) {
+//   const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+//   if (!activity) return res.status(404).json({ error: "Activity not found." });
 
-  let items;
-  try {
-    items = await generateActivities({
-      type,
-      notesText,
-      difficulty,
-      language,
-      questionCount,
-      fileHash,
-    });
-  } catch (err) {
-    if (
-      err.status === 429 ||
-      err.isQuotaExhausted ||
-      (err.message && (err.message.toLowerCase().includes("quota") || err.message.toLowerCase().includes("rate limit")))
-    ) {
-      console.warn(`[activity.controller] AI quota/rate-limit error: ${err.message}`);
-      return res.status(429).json({
-        success: false,
-        error: "AI service quota temporarily exhausted. Please try again in a few minutes or provide questions manually.",
-      });
-    }
-    throw err;
-  }
+//   let notesText = "";
+//   if (req.file) {
+//     notesText = await extractTextFromFile(req.file.path);
+//   } else if (req.body.notesText) {
+//     notesText = req.body.notesText;
+//   } else {
+//     return res.status(400).json({ error: "Upload a file or provide notesText." });
+//   }
 
-  let orderIndex = await nextOrderIndex(session.id);
-  const rows = items.map((item) => ({
-    session_id: session.id,
-    type: item.type,
-    question: item.question,
-    options: item.options,
-    correct_answer: item.correct_answer,
-    timer_seconds: item.timer_seconds,
-    difficulty: item.difficulty,
-    // Everything lands as an unpublished draft. Nothing reaches a participant
-    // until the host has reviewed it (PRD 6.1).
-    is_published: false,
-    ai_generated: true,
-    order_index: orderIndex++,
-  }));
+//   activity.sourceNotesText = notesText;
+//   await activity.save();
+//   res.json({ activity });
+// }
 
-  const created = await q(
-    supabase.from("activities").insert(rows).select("*"),
-    "save generated drafts"
-  );
+// async function updateActivity(req, res) {
+//   const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+//   if (!activity) return res.status(404).json({ error: "Activity not found." });
 
-  // Persist the notes so a later "generate more" doesn't need a re-upload.
-  if (req.body.notesText && req.body.notesText.trim() !== session.source_notes_text) {
-    await q(
-      supabase.from("sessions").update({ source_notes_text: notesText }).eq("id", session.id),
-      "save notes"
-    );
-  }
+//   const { title, difficulty, expiresAt } = req.body;
+//   if (title !== undefined) {
+//     if (typeof title !== "string" || !title.trim()) {
+//       return res.status(400).json({ errors: { title: "Give the quiz a name." } });
+//     }
+//     activity.title = title.trim();
+//   }
+//   if (difficulty !== undefined) {
+//     if (!VALID_DIFFICULTIES.includes(difficulty)) {
+//       return res.status(400).json({ errors: { difficulty: "Choose a valid difficulty." } });
+//     }
+//     activity.difficulty = difficulty;
+//   }
+//   if (expiresAt !== undefined) {
+//     if (expiresAt && Number.isNaN(new Date(expiresAt).getTime())) {
+//       return res.status(400).json({ errors: { expiresAt: "Choose a valid date." } });
+//     }
+//     activity.expiresAt = expiresAt || null;
+//   }
 
-  res.status(201).json({
-    success: true,
-    activities: created,
-    requested: questionCount,
-    generated: created.length,
-  });
-}
+//   await activity.save();
+//   res.json({ activity });
+// }
 
-// ---------------------------------------------------------------------------
-// Draft review: list / create / edit / delete / publish
-// ---------------------------------------------------------------------------
+// async function generate(req, res) {
+//   const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+//   if (!activity) return res.status(404).json({ error: "Activity not found." });
 
-// GET /api/sessions/:sessionId/activities?status=draft|published|all
-async function listActivities(req, res) {
-  const session = await ownedSession(req.params.sessionId, req.user.id);
+//   if (!activity.sourceNotesText || !activity.sourceNotesText.trim()) {
+//     return res.status(400).json({ error: "Upload or paste notes before generating." });
+//   }
 
-  let builder = supabase
-    .from("activities")
-    .select("*")
-    .eq("session_id", session.id)
-    .order("order_index", { ascending: true })
-    .order("created_at", { ascending: true });
+//   try {
+//     const questions = await generateQuestions({
+//       category: activity.type,
+//       difficulty: activity.difficulty,
+//       notesText: activity.sourceNotesText,
+//       language: req.body.language || "English",
+//       questionCount: clampQuestionCount(req.body.questionCount),
+//     });
+//     activity.questions = questions;
+//     await activity.save();
+//     res.json({ activity });
+//   } catch (err) {
+//     res.status(502).json({ error: err.message });
+//   }
+// }
 
-  if (req.query.status === "draft") builder = builder.eq("is_published", false);
-  if (req.query.status === "published") builder = builder.eq("is_published", true);
+// async function updateQuestion(req, res) {
+//   const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+//   if (!activity) return res.status(404).json({ error: "Activity not found." });
 
-  const activities = await q(builder, "list activities");
-  res.json({ activities });
-}
+//   const questions = activity.questions || [];
+//   const question = questions.find((q) => q.questionId === req.params.qId);
+//   if (!question) return res.status(404).json({ error: "Question not found." });
 
-// POST /api/sessions/:sessionId/activities   — manual question
+//   const { questionText, options, correctAnswer } = req.body;
+//   if (questionText !== undefined) question.questionText = questionText;
+//   if (options !== undefined) question.options = options;
+//   if (correctAnswer !== undefined) question.correctAnswer = correctAnswer;
+
+//   activity.questions = [...questions];
+//   await activity.save();
+//   res.json({ activity });
+// }
+
+// async function addQuestion(req, res) {
+//   const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+//   if (!activity) return res.status(404).json({ error: "Activity not found." });
+
+//   const questions = activity.questions || [];
+//   const defaultType = activity.type === "quiz" ? "mcq" : activity.type === "poll" ? "poll" : "open_text";
+//   questions.push({
+//     questionId: `q${questions.length + 1}_${Date.now().toString(36)}`,
+//     type: defaultType,
+//     questionText: "",
+//     options: defaultType === "mcq" || defaultType === "poll" ? ["", "", "", ""] : [],
+//     correctAnswer: null,
+//     orderIndex: questions.length,
+//     aiGenerated: false,
+//   });
+//   activity.questions = questions;
+//   await activity.save();
+//   res.json({ activity });
+// }
+
+// async function removeQuestion(req, res) {
+//   const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+//   if (!activity) return res.status(404).json({ error: "Activity not found." });
+
+//   activity.questions = (activity.questions || []).filter((q) => q.questionId !== req.params.qId);
+//   await activity.save();
+//   res.json({ activity });
+// }
+
+// async function publish(req, res) {
+//   const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+//   if (!activity) return res.status(404).json({ error: "Activity not found." });
+//   if (!activity.questions || activity.questions.length === 0) {
+//     return res.status(400).json({ error: "Add at least one question before publishing." });
+//   }
+//   activity.status = "published";
+//   await activity.save();
+//   res.json({ activity });
+// }
+
+// async function closeActivity(req, res) {
+//   const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+//   if (!activity) return res.status(404).json({ error: "Activity not found." });
+//   activity.status = "closed";
+//   await activity.save();
+//   res.json({ activity });
+// }
+
+// async function getResults(req, res) {
+//   const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+//   if (!activity) return res.status(404).json({ error: "Activity not found." });
+
+//   const participants = await Participant.findAll({ where: { activityId: activity._id } });
+//   const responses = await Response.findAll({ where: { activityId: activity._id } });
+
+//   const byQuestion = {};
+//   (activity.questions || []).forEach((q) => {
+//     byQuestion[q.questionId] = { questionText: q.questionText, type: q.type, answers: [] };
+//   });
+//   responses.forEach((r) => {
+//     if (byQuestion[r.questionId]) {
+//       byQuestion[r.questionId].answers.push({ value: r.answerValue, isCorrect: r.isCorrect });
+//     }
+//   });
+
+//   res.json({
+//     activity,
+//     totalParticipants: participants.length,
+//     totalResponses: responses.length,
+//     byQuestion,
+//   });
+// }
+
+// async function exportCsv(req, res) {
+//   const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+//   if (!activity) return res.status(404).json({ error: "Activity not found." });
+
+//   const participants = await Participant.findAll({ where: { activityId: activity._id } });
+//   const responses = await Response.findAll({ where: { activityId: activity._id } });
+//   const participantById = new Map(participants.map((p) => [String(p._id), p]));
+
+//   const rows = [["Participant", "Question ID", "Answer", "Correct", "Submitted At"]];
+//   responses.forEach((r) => {
+//     const p = participantById.get(String(r.participantId));
+//     rows.push([
+//       p ? p.displayName : "Unknown",
+//       r.questionId,
+//       JSON.stringify(r.answerValue),
+//       r.isCorrect === null ? "" : String(r.isCorrect),
+//       r.submittedAt ? new Date(r.submittedAt).toISOString() : "",
+//     ]);
+//   });
+
+//   const csv = rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+
+//   res.setHeader("Content-Type", "text/csv");
+//   res.setHeader("Content-Disposition", `attachment; filename="activity-${activity.linkId}-results.csv"`);
+//   res.send(csv);
+// }
+
+// module.exports = {
+//   createActivity,
+//   uploadNotes,
+//   generate,
+//   updateQuestion,
+//   addQuestion,
+//   removeQuestion,
+//   publish,
+//   closeActivity,
+//   getResults,
+//   updateActivity,
+// };
+
+
+const Session = require("../models/Session");
+const Activity = require("../models/Activity");
+const Participant = require("../models/Participant");
+const Response = require("../models/Response");
+const { generateLinkCode } = require("../utils/generateLink");
+const { extractTextFromFile } = require("../services/fileParser.service");
+const { generateQuestions, clampQuestionCount } = require("../services/ai.service");
+const { getEffectiveCorrectAnswer } = require("../services/scoring.service");
+
+const VALID_CATEGORIES = ["quiz", "poll", "feedback", "qa"];
+const VALID_DIFFICULTIES = ["easy", "medium", "hard"];
+
 async function createActivity(req, res) {
-  const session = await ownedSession(req.params.sessionId, req.user.id);
+  const session = await Session.findOne({ where: { _id: req.params.sessionId, hostId: req.user.id } });
+  if (!session) return res.status(404).json({ error: "Session not found." });
 
-  const type = req.body.type === "poll" ? "poll" : "quiz";
-  const options = Array.isArray(req.body.options) && req.body.options.length
-    ? req.body.options.map((o) => String(o))
-    : ["", "", "", ""];
+  const { title, type, difficulty } = req.body;
+  if (!VALID_CATEGORIES.includes(type)) {
+    return res.status(400).json({ errors: { type: "Choose a valid activity type." } });
+  }
+  const chosenDifficulty = VALID_DIFFICULTIES.includes(difficulty) ? difficulty : "medium";
 
-  const activity = await q(
-    supabase
-      .from("activities")
-      .insert({
-        session_id: session.id,
-        type,
-        question: String(req.body.question || "").trim(),
-        options,
-        correct_answer: type === "quiz" ? req.body.correctAnswer || null : null,
-        timer_seconds: Math.min(600, Math.max(5, parseInt(req.body.timerSeconds, 10) || 30)),
-        difficulty: VALID_DIFFICULTIES.includes(req.body.difficulty) ? req.body.difficulty : "medium",
-        is_published: false,
-        ai_generated: false,
-        order_index: await nextOrderIndex(session.id),
-      })
-      .select("*")
-      .single(),
-    "create activity"
-  );
+  const activity = await Activity.create({
+    sessionId: session._id,
+    hostId: req.user.id,
+    type,
+    title: title && title.trim() ? title.trim() : session.title,
+    difficulty: chosenDifficulty,
+    linkId: generateLinkCode(),
+    questions: [],
+    status: "draft",
+  });
 
   res.status(201).json({ activity });
 }
 
-// PATCH /api/activities/:id
+async function uploadNotes(req, res) {
+  const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+  if (!activity) return res.status(404).json({ error: "Activity not found." });
+
+  let notesText = "";
+  if (req.file) {
+    notesText = await extractTextFromFile(req.file.path);
+  } else if (req.body.notesText) {
+    notesText = req.body.notesText;
+  } else {
+    return res.status(400).json({ error: "Upload a file or provide notesText." });
+  }
+
+  activity.sourceNotesText = notesText;
+  await activity.save();
+  res.json({ activity });
+}
+
+async function generate(req, res) {
+  const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+  if (!activity) return res.status(404).json({ error: "Activity not found." });
+
+  const notesText = req.body.notesText || activity.sourceNotesText;
+  if (!notesText || !notesText.trim()) {
+    return res.status(400).json({ error: "Upload or paste notes before generating." });
+  }
+
+  if (req.body.notesText && req.body.notesText.trim()) {
+    activity.sourceNotesText = req.body.notesText.trim();
+  }
+
+  try {
+    const questions = await generateQuestions({
+      category: activity.type,
+      difficulty: activity.difficulty,
+      notesText: notesText,
+      language: req.body.language || "English",
+      questionCount: clampQuestionCount(req.body.questionCount),
+    });
+
+    if (req.body.append) {
+      const existing = activity.questions || [];
+      const shaped = questions.map((q, idx) => ({
+        ...q,
+        questionId: `q${existing.length + idx + 1}_${Date.now().toString(36)}_${idx}`,
+        orderIndex: existing.length + idx,
+      }));
+      activity.questions = [...existing, ...shaped];
+    } else {
+      activity.questions = questions;
+    }
+
+    await activity.save();
+    res.json({ activity });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+}
+
 async function updateActivity(req, res) {
-  const { activity } = await ownedActivity(req.params.id, req.user.id);
-  const { question, options, correctAnswer, timerSeconds, difficulty, orderIndex, type } = req.body;
+  const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+  if (!activity) return res.status(404).json({ error: "Activity not found." });
 
-  const patch = {};
-
-  if (type !== undefined) {
-    if (!["quiz", "poll"].includes(type)) throw httpError(400, "Type must be quiz or poll.");
-    patch.type = type;
-    if (type === "poll") patch.correct_answer = null;
-  }
-
-  if (question !== undefined) {
-    if (!String(question).trim()) {
-      throw httpError(400, "The question can't be empty.", { question: "The question can't be empty." });
+  const { title, difficulty, expiresAt } = req.body;
+  if (title !== undefined) {
+    if (typeof title !== "string" || !title.trim()) {
+      return res.status(400).json({ errors: { title: "Give the quiz a name." } });
     }
-    patch.question = String(question).trim();
+    activity.title = title.trim();
   }
-
-  if (options !== undefined) {
-    if (!Array.isArray(options)) throw httpError(400, "Options must be a list.");
-    const cleaned = options.map((o) => String(o).trim()).filter(Boolean);
-    if (cleaned.length < 2) {
-      throw httpError(400, "Give at least two answer options.", { options: "Give at least two answer options." });
-    }
-    patch.options = cleaned;
-  }
-
-  if (correctAnswer !== undefined) {
-    patch.correct_answer =
-      correctAnswer === null || !String(correctAnswer).trim() ? null : String(correctAnswer).trim();
-  }
-
-  if (timerSeconds !== undefined) {
-    const t = parseInt(timerSeconds, 10);
-    if (!Number.isFinite(t) || t < 5 || t > 600) {
-      throw httpError(400, "Timer must be between 5 and 600 seconds.", {
-        timerSeconds: "Timer must be between 5 and 600 seconds.",
-      });
-    }
-    patch.timer_seconds = t;
-  }
-
   if (difficulty !== undefined) {
-    if (!VALID_DIFFICULTIES.includes(difficulty)) throw httpError(400, "Choose a valid difficulty.");
-    patch.difficulty = difficulty;
-  }
-
-  if (orderIndex !== undefined) patch.order_index = parseInt(orderIndex, 10) || 0;
-
-  // A quiz question is only gradeable if the answer key is one of the options.
-  const finalType = patch.type ?? activity.type;
-  const finalOptions = patch.options ?? activity.options;
-  const finalCorrect = patch.correct_answer !== undefined ? patch.correct_answer : activity.correct_answer;
-
-  if (finalType === "quiz" && finalCorrect) {
-    const match = finalOptions.find((o) => String(o).trim().toLowerCase() === String(finalCorrect).trim().toLowerCase());
-    if (!match) {
-      throw httpError(400, "The correct answer must be one of the options.", {
-        correctAnswer: "The correct answer must be one of the options.",
-      });
+    if (!VALID_DIFFICULTIES.includes(difficulty)) {
+      return res.status(400).json({ errors: { difficulty: "Choose a valid difficulty." } });
     }
-    patch.correct_answer = match; // snap to exact option text
+    activity.difficulty = difficulty;
+  }
+  if (expiresAt !== undefined) {
+    if (expiresAt && Number.isNaN(new Date(expiresAt).getTime())) {
+      return res.status(400).json({ errors: { expiresAt: "Choose a valid date." } });
+    }
+    activity.expiresAt = expiresAt || null;
   }
 
-  const updated = await q(
-    supabase.from("activities").update(patch).eq("id", activity.id).select("*").single(),
-    "update activity"
-  );
-
-  res.json({ activity: updated });
+  await activity.save();
+  res.json({ activity });
 }
 
-// DELETE /api/activities/:id
-async function deleteActivity(req, res) {
-  const { activity, session } = await ownedActivity(req.params.id, req.user.id);
+async function updateQuestion(req, res) {
+  const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+  if (!activity) return res.status(404).json({ error: "Activity not found." });
 
-  if (session.current_activity_id === activity.id) {
-    throw httpError(400, "That question is live right now. Close it before deleting.");
-  }
+  const questions = activity.questions || [];
+  const question = questions.find((q) => q.questionId === req.params.qId);
+  if (!question) return res.status(404).json({ error: "Question not found." });
 
-  await q(supabase.from("activities").delete().eq("id", activity.id), "delete activity");
-  res.json({ success: true });
+  const { questionText, options, correctAnswer } = req.body;
+  if (questionText !== undefined) question.questionText = questionText;
+  if (options !== undefined) question.options = options;
+  if (correctAnswer !== undefined) question.correctAnswer = correctAnswer;
+
+  activity.questions = [...questions];
+  await activity.save();
+  res.json({ activity });
 }
 
-// POST /api/sessions/:sessionId/activities/publish   body: { activityIds?: [] }
-async function publishActivities(req, res) {
-  const session = await ownedSession(req.params.sessionId, req.user.id);
+async function addQuestion(req, res) {
+  const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+  if (!activity) return res.status(404).json({ error: "Activity not found." });
 
-  let builder = supabase
-    .from("activities")
-    .update({ is_published: true })
-    .eq("session_id", session.id)
-    .eq("is_published", false);
+  const count = Math.min(20, Math.max(1, parseInt(req.body.count || 1, 10)));
+  const questions = [...(activity.questions || [])];
+  const defaultType = activity.type === "quiz" ? "mcq" : activity.type === "poll" ? "poll" : "open_text";
 
-  if (Array.isArray(req.body.activityIds) && req.body.activityIds.length) {
-    builder = builder.in("id", req.body.activityIds);
-  }
-
-  // Refuse to publish anything a participant couldn't actually answer.
-  const candidates = await q(
-    supabase
-      .from("activities")
-      .select("*")
-      .eq("session_id", session.id)
-      .eq("is_published", false),
-    "load drafts"
-  );
-
-  const targets = Array.isArray(req.body.activityIds) && req.body.activityIds.length
-    ? candidates.filter((a) => req.body.activityIds.includes(a.id))
-    : candidates;
-
-  const invalid = targets.filter((a) => {
-    const hasQuestion = a.question && a.question.trim().length > 0;
-    const validOptions = (a.options || []).filter((o) => String(o).trim().length > 0);
-    const hasOptions = validOptions.length >= 2;
-    const hasCorrectAnswer =
-      a.type !== "quiz" ||
-      (a.correct_answer &&
-        String(a.correct_answer).trim().length > 0 &&
-        validOptions.some((o) => String(o).trim().toLowerCase() === String(a.correct_answer).trim().toLowerCase()));
-
-    return !hasQuestion || !hasOptions || !hasCorrectAnswer;
-  });
-
-  if (invalid.length) {
-    const errorDetails = invalid.map((a) => {
-      const missing = [];
-      if (!a.question || !a.question.trim()) missing.push("question text");
-      const validOptions = (a.options || []).filter((o) => String(o).trim().length > 0);
-      if (validOptions.length < 2) missing.push(`at least 2 options (has ${validOptions.length})`);
-      if (a.type === "quiz") {
-        if (!a.correct_answer || !String(a.correct_answer).trim()) {
-          missing.push("a correct answer marked");
-        } else if (!validOptions.some((o) => String(o).trim().toLowerCase() === String(a.correct_answer).trim().toLowerCase())) {
-          missing.push("correct answer matching one of the options");
-        }
-      }
-      return `"${(a.question || 'Untitled').slice(0, 30)}" (${missing.join(", ")})`;
-    });
-
-    throw httpError(
-      400,
-      `${invalid.length} question${invalid.length === 1 ? "" : "s"} need attention before publishing: ${errorDetails.join("; ")}`,
-      { invalidIds: invalid.map((a) => a.id) }
-    );
-  }
-
-  const published = await q(builder.select("*"), "publish activities");
-  res.json({ published: published.length, activities: published });
-}
-
-// POST /api/activities/:id/unpublish
-async function unpublishActivity(req, res) {
-  const { activity } = await ownedActivity(req.params.id, req.user.id);
-  const updated = await q(
-    supabase.from("activities").update({ is_published: false }).eq("id", activity.id).select("*").single(),
-    "unpublish activity"
-  );
-  res.json({ activity: updated });
-}
-
-// ---------------------------------------------------------------------------
-// Live control: push and close
-// ---------------------------------------------------------------------------
-
-// POST /api/activities/:id/push
-async function pushActivity(req, res) {
-  const { activity, session } = await ownedActivity(req.params.id, req.user.id);
-
-  if (session.status !== "active") throw httpError(400, "Start the session before pushing a question.");
-  if (!activity.is_published) throw httpError(400, "Publish this question before pushing it live.");
-
-  // Close whatever is still open so two questions can never run at once.
-  if (session.current_activity_id && session.current_activity_id !== activity.id) {
-    await closeActivityInternal({
-      sessionId: session.id,
-      activityId: session.current_activity_id,
-      reason: "superseded",
+  for (let i = 0; i < count; i++) {
+    questions.push({
+      questionId: `q${questions.length + 1}_${Date.now().toString(36)}_${i}`,
+      type: defaultType,
+      questionText: "",
+      options: defaultType === "mcq" || defaultType === "poll" ? ["", "", "", ""] : [],
+      correctAnswer: null,
+      orderIndex: questions.length,
+      aiGenerated: false,
     });
   }
-
-  const startedAtIso = new Date().toISOString();
-
-  await q(
-    supabase
-      .from("activities")
-      .update({ closed_at: null })
-      .eq("id", activity.id),
-    "reopen activity"
-  );
-
-  await q(
-    supabase
-      .from("sessions")
-      .update({ current_activity_id: activity.id, activity_started_at: startedAtIso })
-      .eq("id", session.id),
-    "set current activity"
-  );
-
-  const { startedAt, endsAt } = realtime.pushActivity({
-    sessionId: session.id,
-    activity: { ...activity, closed_at: null },
-    startedAt: new Date(startedAtIso).getTime(),
-  });
-
-  res.json({ activity, startedAt, endsAt, serverNow: Date.now() });
+  activity.questions = questions;
+  await activity.save();
+  res.json({ activity });
 }
 
-/**
- * Shared close path. Called by the host endpoint and by the realtime
- * auto-close timer, so both produce identical state and identical broadcasts.
- */
-async function closeActivityInternal({ sessionId, activityId, reason = "host" }) {
-  const activity = await q(
-    supabase.from("activities").select("*").eq("id", activityId).maybeSingle(),
-    "load activity to close"
-  );
-  if (!activity || activity.closed_at) return null;
+async function removeQuestion(req, res) {
+  const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+  if (!activity) return res.status(404).json({ error: "Activity not found." });
 
-  await q(
-    supabase.from("activities").update({ closed_at: new Date().toISOString() }).eq("id", activityId),
-    "close activity"
-  );
+  activity.questions = (activity.questions || []).filter((q) => q.questionId !== req.params.qId);
+  await activity.save();
+  res.json({ activity });
+}
 
-  const session = await q(
-    supabase.from("sessions").select("*").eq("id", sessionId).maybeSingle(),
-    "load session on close"
-  );
-  if (session && session.current_activity_id === activityId) {
-    await q(
-      supabase
-        .from("sessions")
-        .update({ current_activity_id: null, activity_started_at: null })
-        .eq("id", sessionId),
-      "clear current activity"
-    );
+async function publish(req, res) {
+  const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+  if (!activity) return res.status(404).json({ error: "Activity not found." });
+  if (!activity.questions || activity.questions.length === 0) {
+    return res.status(400).json({ error: "Add at least one question before publishing." });
   }
+  activity.status = "published";
+  await activity.save();
+  res.json({ activity });
+}
 
-  const [tally, detailedLeaderboard, pollDetails] = await Promise.all([
-    getActivityTally(activity),
-    getDetailedLeaderboard(sessionId),
-    activity.type === "poll" ? getPollStudentVotes(activityId, sessionId) : Promise.resolve(null),
-  ]);
+async function closeActivity(req, res) {
+  const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+  if (!activity) return res.status(404).json({ error: "Activity not found." });
+  activity.status = "closed";
+  await activity.save();
+  res.json({ activity });
+}
 
-  realtime.emitActivityEnded({
-    sessionId,
-    activityId,
-    activityType: activity.type,
-    tally,
-    leaderboard: detailedLeaderboard,
-    details: activity.type === "poll" ? pollDetails : { correctAnswer: activity.correct_answer },
+async function getResults(req, res) {
+  const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+  if (!activity) return res.status(404).json({ error: "Activity not found." });
+
+  const participants = await Participant.findAll({
+    where: { activityId: activity._id },
+    order: [["joinedAt", "DESC"]],
+  });
+  const responses = await Response.findAll({
+    where: { activityId: activity._id },
+    order: [["submittedAt", "ASC"]],
   });
 
-  // ---- Bulk mode: auto-push next unpushed published activity ----
-  if (session && session.push_mode === "bulk" && session.status === "active") {
-    try {
-      const allPublished = await q(
-        supabase
-          .from("activities")
-          .select("*")
-          .eq("session_id", sessionId)
-          .eq("is_published", true)
-          .order("order_index", { ascending: true })
-          .order("created_at", { ascending: true }),
-        "load published for bulk advance"
-      );
-
-      // Find next activity that hasn't been closed yet and isn't the current one
-      const next = allPublished.find((a) => !a.closed_at && a.id !== activityId);
-
-      if (next) {
-        const startedAtIso = new Date().toISOString();
-
-        await q(
-          supabase.from("activities").update({ closed_at: null }).eq("id", next.id),
-          "reopen next activity"
-        );
-
-        await q(
-          supabase
-            .from("sessions")
-            .update({ current_activity_id: next.id, activity_started_at: startedAtIso })
-            .eq("id", sessionId),
-          "set next activity in bulk"
-        );
-
-        const { startedAt, endsAt } = realtime.pushActivity({
-          sessionId,
-          activity: { ...next, closed_at: null },
-          startedAt: new Date(startedAtIso).getTime(),
-        });
-
-        const currentIndex = allPublished.findIndex((a) => a.id === next.id);
-        realtime.emitAutoNext({
-          sessionId,
-          activity: next,
-          startedAt,
-          endsAt,
-          index: currentIndex + 1,
-          total: allPublished.length,
-        });
-      }
-    } catch (err) {
-      console.error("[activity] bulk auto-advance failed:", err.message);
+  const byQuestion = {};
+  (activity.questions || []).forEach((q) => {
+    byQuestion[q.questionId] = { questionText: q.questionText, type: q.type, correctAnswer: q.correctAnswer, answers: [] };
+  });
+  responses.forEach((r) => {
+    if (byQuestion[r.questionId]) {
+      byQuestion[r.questionId].answers.push({ value: r.answerValue, isCorrect: r.isCorrect, participantId: r.participantId });
     }
-  }
-
-  return { activity, tally, leaderboard: detailedLeaderboard, pollDetails, reason };
-}
-
-
-// POST /api/activities/:id/end  (and POST /api/activities/:id/close)
-async function endActivity(req, res) {
-  const { activity, session } = await ownedActivity(req.params.id, req.user.id);
-  const result = await closeActivityInternal({
-    sessionId: session.id,
-    activityId: activity.id,
-    reason: "host",
   });
 
-  const [tally, detailedLeaderboard, pollDetails] = await Promise.all([
-    getActivityTally(activity),
-    getDetailedLeaderboard(session.id),
-    activity.type === "poll" ? getPollStudentVotes(activity.id, session.id) : Promise.resolve(null),
-  ]);
-
-  res.json({
-    success: true,
-    status: "ended",
-    activity: result?.activity || { ...activity, closed_at: activity.closed_at || new Date().toISOString() },
-    activityType: activity.type,
-    tally: result?.tally || tally,
-    leaderboard: detailedLeaderboard,
-    pollDetails,
+  // Group responses by participant
+  const responsesByParticipant = new Map();
+  responses.forEach((r) => {
+    const pId = String(r.participantId);
+    if (!responsesByParticipant.has(pId)) {
+      responsesByParticipant.set(pId, []);
+    }
+    responsesByParticipant.get(pId).push(r);
   });
-}
 
-// Keep closeActivity as alias
-const closeActivity = endActivity;
+  const scorableQuestions = (activity.questions || []).filter(
+    (q) => getEffectiveCorrectAnswer(q) !== null || q.type === "mcq"
+  );
+  const totalScorable = scorableQuestions.length > 0
+    ? scorableQuestions.length
+    : (activity.questions ? activity.questions.length : 0);
 
-// GET /api/activities/:id/results
-async function getActivityResults(req, res) {
-  const { activity, session } = await ownedActivity(req.params.id, req.user.id);
-  const [tally, detailedLeaderboard, pollDetails] = await Promise.all([
-    getActivityTally(activity),
-    getDetailedLeaderboard(session.id),
-    activity.type === "poll" ? getPollStudentVotes(activity.id, session.id) : Promise.resolve(null),
-  ]);
+  const students = participants.map((p) => {
+    const pResponses = responsesByParticipant.get(String(p._id)) || [];
+    const isDone = pResponses.length > 0;
+    const responseByQId = new Map(pResponses.map((r) => [r.questionId, r]));
+
+    let correctCount = 0;
+    (activity.questions || []).forEach((q) => {
+      const resp = responseByQId.get(q.questionId);
+      if (!resp) return;
+
+      const effCorrect = getEffectiveCorrectAnswer(q);
+      const isCorrectFlag = resp.isCorrect === true || resp.isCorrect === 1 || resp.isCorrect === "true";
+      const matchesAnswer =
+        effCorrect !== null &&
+        resp.answerValue !== undefined &&
+        resp.answerValue !== null &&
+        String(resp.answerValue).trim().toLowerCase() === effCorrect.toLowerCase();
+
+      if (isCorrectFlag || matchesAnswer) {
+        correctCount += 1;
+      }
+    });
+
+    const studentAnswers = (activity.questions || []).map((q) => {
+      const resp = responseByQId.get(q.questionId);
+      return {
+        questionId: q.questionId,
+        questionText: q.questionText,
+        type: q.type,
+        options: q.options || [],
+        answerValue: resp ? resp.answerValue : null,
+        isCorrect: resp ? resp.isCorrect : null,
+        correctAnswer: q.correctAnswer || null,
+      };
+    });
+
+    const latestSubmission = pResponses.length > 0
+      ? pResponses.reduce((latest, r) => (!latest || new Date(r.submittedAt) > new Date(latest) ? r.submittedAt : latest), null)
+      : null;
+
+    const percentage = totalScorable > 0 ? Math.round((correctCount / totalScorable) * 100) : 0;
+
+    return {
+      participantId: p._id,
+      displayName: p.displayName,
+      guestId: p.guestId,
+      joinedAt: p.joinedAt,
+      isDone,
+      submittedAt: latestSubmission,
+      score: {
+        correct: correctCount,
+        total: totalScorable,
+        percentage,
+      },
+      answers: studentAnswers,
+    };
+  });
+
+  const completedStudents = students.filter((s) => s.isDone);
+  const averageScore = completedStudents.length > 0 && totalScorable > 0
+    ? Math.round(
+        completedStudents.reduce((sum, s) => sum + (s.score.percentage || 0), 0) / completedStudents.length
+      )
+    : 0;
+
   res.json({
     activity,
-    tally,
-    leaderboard: detailedLeaderboard,
-    pollDetails,
+    totalParticipants: participants.length,
+    totalResponses: responses.length,
+    completedParticipants: completedStudents.length,
+    pendingParticipants: participants.length - completedStudents.length,
+    averageScore,
+    byQuestion,
+    students,
   });
+}
+
+async function exportCsv(req, res) {
+  const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+  if (!activity) return res.status(404).json({ error: "Activity not found." });
+
+  const participants = await Participant.findAll({ where: { activityId: activity._id } });
+  const responses = await Response.findAll({ where: { activityId: activity._id } });
+  const participantById = new Map(participants.map((p) => [String(p._id), p]));
+
+  const rows = [["Participant", "Question ID", "Answer", "Correct", "Submitted At"]];
+  responses.forEach((r) => {
+    const p = participantById.get(String(r.participantId));
+    rows.push([
+      p ? p.displayName : "Unknown",
+      r.questionId,
+      JSON.stringify(r.answerValue),
+      r.isCorrect === null ? "" : String(r.isCorrect),
+      r.submittedAt ? new Date(r.submittedAt).toISOString() : "",
+    ]);
+  });
+
+  const csv = rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename="activity-${activity.linkId}-results.csv"`);
+  res.send(csv);
 }
 
 module.exports = {
-  listActivities,
-  generate,
   createActivity,
+  uploadNotes,
+  generate,
   updateActivity,
-  deleteActivity,
-  publishActivities,
-  unpublishActivity,
-  pushActivity,
+  updateQuestion,
+  addQuestion,
+  removeQuestion,
+  publish,
   closeActivity,
-  endActivity,
-  closeActivityInternal,
-  getActivityResults,
+  getResults,
+  exportCsv,
 };
