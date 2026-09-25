@@ -38,6 +38,8 @@ export default function AttemptPage() {
   const [qaQuestion, setQaQuestion] = useState("");
   const [qaSending, setQaSending] = useState(false);
   const [qaMsg, setQaMsg] = useState("");
+  const [qaNotification, setQaNotification] = useState(null);
+  const [unreadQaCount, setUnreadQaCount] = useState(0);
 
   // Screen Sharing State for Participant
   const [hostSharingScreen, setHostSharingScreen] = useState(false);
@@ -49,6 +51,7 @@ export default function AttemptPage() {
   const remoteStreamRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const pendingCandidatesRef = useRef([]);
+  const notificationTimerRef = useRef(null);
 
   // Keep refs up-to-date for interval callback
   const answersRef = useRef(answers);
@@ -62,6 +65,40 @@ export default function AttemptPage() {
 
   const submittingRef = useRef(submitting);
   submittingRef.current = submitting;
+
+  const guestIdRef = useRef(guestId);
+  guestIdRef.current = guestId;
+
+  function triggerNotification(notif) {
+    if (notificationTimerRef.current) {
+      clearTimeout(notificationTimerRef.current);
+    }
+    setQaNotification(notif);
+    setUnreadQaCount((prev) => prev + 1);
+
+    // Subtle audio chime
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        const ctx = new AudioCtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.15);
+        gain.gain.setValueAtTime(0.12, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.35);
+      }
+    } catch (_) {}
+
+    notificationTimerRef.current = setTimeout(() => {
+      setQaNotification(null);
+    }, 8000);
+  }
 
   useEffect(() => {
     const storedGuestId = sessionStorage.getItem("sp_guest_id");
@@ -115,8 +152,39 @@ export default function AttemptPage() {
       });
     });
 
-    socket.on("qa-answered", ({ qaFeed }) => {
-      setActivity((prev) => (prev ? { ...prev, qaFeed: parseQaFeed(qaFeed) } : prev));
+    socket.on("qa-answered", ({ qaFeed, answeredItem, questionId }) => {
+      const parsedFeed = parseQaFeed(qaFeed);
+      setActivity((prev) => {
+        if (!prev) return prev;
+        const oldFeed = parseQaFeed(prev.qaFeed);
+
+        let target = answeredItem;
+        if (!target && questionId) {
+          target = parsedFeed.find((q) => q.id === questionId);
+        }
+        if (!target) {
+          target = parsedFeed.find((newQ) => {
+            const oldQ = oldFeed.find((o) => o.id === newQ.id);
+            const newAns = newQ.answer || newQ.answerText;
+            const oldAns = oldQ ? (oldQ.answer || oldQ.answerText) : null;
+            return newAns && newAns !== oldAns;
+          });
+        }
+
+        if (target && (target.answer || target.answerText)) {
+          const isMine = Boolean(target.participantId && target.participantId === guestIdRef.current);
+          triggerNotification({
+            id: target.id + "_" + Date.now(),
+            targetId: target.id,
+            isMyQuestion: isMine,
+            questionText: target.text || target.questionText || "Question",
+            replyText: target.answer || target.answerText,
+            senderName: target.participantName || target.displayName || "Participant",
+          });
+        }
+
+        return { ...prev, qaFeed: parsedFeed };
+      });
     });
 
     socket.on("qa-deleted", ({ qaFeed }) => {
@@ -378,6 +446,92 @@ export default function AttemptPage() {
 
   const hasQuestions = Array.isArray(activity?.questions) && activity.questions.length > 0;
 
+  const notificationBanner = qaNotification ? (
+    <div
+      role="alert"
+      className={`fixed top-4 sm:top-6 right-4 sm:right-6 z-50 max-w-sm sm:max-w-md w-full transition-all duration-300 transform translate-y-0 opacity-100 shadow-2xl rounded-2xl p-4 border backdrop-blur-md animate-in slide-in-from-top-4 ${
+        qaNotification.isMyQuestion
+          ? "bg-[#0B1528]/95 dark:bg-[#070D1B]/95 border-emerald-500/60 text-white shadow-emerald-500/25 ring-2 ring-emerald-500/30"
+          : "bg-white/95 dark:bg-[#12142B]/95 border-[#E1E1DC] dark:border-[#2A2E52] text-gray-900 dark:text-gray-100 shadow-xl"
+      }`}
+    >
+      <div className="flex items-start gap-3">
+        <div
+          className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 text-lg shadow-sm ${
+            qaNotification.isMyQuestion
+              ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
+              : "bg-primary/10 text-primary border border-primary/20"
+          }`}
+        >
+          {qaNotification.isMyQuestion ? "🔔" : "💬"}
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-1 mb-1">
+            <div className="flex items-center gap-1.5">
+              <span
+                className={`text-xs font-bold uppercase tracking-wider ${
+                  qaNotification.isMyQuestion ? "text-emerald-400" : "text-primary"
+                }`}
+              >
+                {qaNotification.isMyQuestion
+                  ? "Host Replied to Your Question!"
+                  : "New Host Answer in Q&A"}
+              </span>
+              {qaNotification.isMyQuestion && (
+                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.2 rounded font-bold">
+                  You
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setQaNotification(null)}
+              className="text-gray-400 hover:text-gray-200 text-sm font-bold p-1 leading-none rounded hover:bg-white/10"
+              title="Dismiss notification"
+            >
+              ✕
+            </button>
+          </div>
+
+          <p className="text-xs text-gray-300 dark:text-gray-300 line-clamp-1 mb-2 italic">
+            "{qaNotification.questionText}"
+          </p>
+
+          <div className="p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-xs text-emerald-100 font-medium leading-relaxed">
+            <span className="font-bold text-emerald-400 mr-1.5">Host Reply:</span>
+            {qaNotification.replyText}
+          </div>
+
+          <div className="mt-2.5 flex items-center justify-between text-[11px]">
+            <span className="text-gray-400 text-[10px]">Just now</span>
+            <button
+              type="button"
+              onClick={() => {
+                if (hasQuestions) {
+                  setShowQaModal(true);
+                  setUnreadQaCount(0);
+                } else {
+                  const el = document.getElementById(`qa-item-${qaNotification.targetId}`);
+                  if (el) {
+                    el.scrollIntoView({ behavior: "smooth", block: "center" });
+                    el.classList.add("ring-2", "ring-emerald-500", "transition-all");
+                    setTimeout(() => el.classList.remove("ring-2", "ring-emerald-500"), 3500);
+                  }
+                }
+                setQaNotification(null);
+              }}
+              className="text-emerald-400 hover:text-emerald-300 font-semibold underline underline-offset-2 flex items-center gap-1 cursor-pointer"
+            >
+              <span>View in Q&A</span>
+              <span>→</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   if (!activity) {
     return (
       <main className="min-h-screen">
@@ -394,7 +548,8 @@ export default function AttemptPage() {
     const qaList = parseQaFeed(activity.qaFeed);
 
     return (
-      <main className="min-h-screen pb-16 bg-[#FAFAF9] dark:bg-[#080915]">
+      <main className="min-h-screen pb-16 bg-[#FAFAF9] dark:bg-[#080915] relative">
+        {notificationBanner}
         <Navbar userName={guestName || undefined} logoutLabel={undefined} />
 
         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
@@ -606,6 +761,7 @@ export default function AttemptPage() {
                     return (
                       <div
                         key={q.id}
+                        id={`qa-item-${q.id}`}
                         className={`p-3.5 rounded-xl border transition-all ${
                           isAnswered
                             ? "bg-emerald-500/[0.04] border-emerald-500/30 dark:bg-emerald-950/10"
@@ -668,7 +824,8 @@ export default function AttemptPage() {
   const timerWarning = timeLeft <= 20 && timeLeft > 10;
 
   return (
-    <main className="min-h-screen pb-16 bg-[#FAFAF9] dark:bg-[#080915]">
+    <main className="min-h-screen pb-16 bg-[#FAFAF9] dark:bg-[#080915] relative">
+      {notificationBanner}
       <Navbar userName={guestName || undefined} logoutLabel={undefined} />
 
       <div className="max-w-xl mx-auto px-4 sm:px-6 py-8">
@@ -960,10 +1117,18 @@ export default function AttemptPage() {
         {activity?.allowQa && (
           <button
             type="button"
-            onClick={() => setShowQaModal(true)}
-            className="fixed bottom-6 right-6 z-40 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2.5 rounded-full shadow-lg flex items-center gap-2 transition-all hover:scale-105 border border-emerald-400/30"
+            onClick={() => {
+              setShowQaModal(true);
+              setUnreadQaCount(0);
+            }}
+            className="fixed bottom-6 right-6 z-40 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2.5 rounded-full shadow-lg flex items-center gap-2 transition-all hover:scale-105 border border-emerald-400/30 relative"
           >
             <span>💬</span> Ask Host (Q&A)
+            {unreadQaCount > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] font-bold rounded-full h-5 w-5 flex items-center justify-center border-2 border-white dark:border-[#080915] animate-pulse">
+                {unreadQaCount}
+              </span>
+            )}
           </button>
         )}
 

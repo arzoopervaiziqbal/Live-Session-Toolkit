@@ -17,6 +17,7 @@ export default function ResultPage() {
   const [qaSuccess, setQaSuccess] = useState("");
   const [qaError, setQaError] = useState("");
   const [myQuestions, setMyQuestions] = useState([]);
+  const [qaNotification, setQaNotification] = useState(null);
 
   // Screen Sharing State for Participant
   const [hostSharingScreen, setHostSharingScreen] = useState(false);
@@ -25,6 +26,39 @@ export default function ResultPage() {
 
   const remoteVideoRef = useRef(null);
   const peerConnectionRef = useRef(null);
+  const notificationTimerRef = useRef(null);
+  const guestIdRef = useRef(guestId);
+  guestIdRef.current = guestId;
+
+  function triggerNotification(notif) {
+    if (notificationTimerRef.current) {
+      clearTimeout(notificationTimerRef.current);
+    }
+    setQaNotification(notif);
+
+    // Subtle audio chime
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        const ctx = new AudioCtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.15);
+        gain.gain.setValueAtTime(0.12, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.35);
+      }
+    } catch (_) {}
+
+    notificationTimerRef.current = setTimeout(() => {
+      setQaNotification(null);
+    }, 8000);
+  }
 
   useEffect(() => {
     const raw = sessionStorage.getItem("sp_last_result");
@@ -35,6 +69,13 @@ export default function ResultPage() {
     try {
       const parsed = JSON.parse(raw);
       setResult(parsed);
+      if (Array.isArray(parsed.qaFeed)) {
+        const myId = sessionStorage.getItem("sp_guest_id");
+        const initialMine = parsed.qaFeed.filter((q) => q.participantId === myId);
+        if (initialMine.length > 0) {
+          setMyQuestions(initialMine);
+        }
+      }
     } catch {
       router.replace("/participant/join");
       return;
@@ -43,7 +84,10 @@ export default function ResultPage() {
     const name = sessionStorage.getItem("sp_guest_name");
     const id = sessionStorage.getItem("sp_guest_id");
     if (name) setGuestName(name);
-    if (id) setGuestId(id);
+    if (id) {
+      setGuestId(id);
+      guestIdRef.current = id;
+    }
   }, [router]);
 
   // Real-time Socket.IO Connection for Results Page
@@ -65,7 +109,7 @@ export default function ResultPage() {
     });
 
     // Real-time Q&A answer update from host
-    socket.on("qa-answered", ({ qaFeed }) => {
+    socket.on("qa-answered", ({ qaFeed, answeredItem, questionId }) => {
       let feed = qaFeed;
       if (typeof feed === "string") {
         try {
@@ -75,8 +119,37 @@ export default function ResultPage() {
         }
       }
       if (Array.isArray(feed)) {
-        setMyQuestions((prev) =>
-          prev.map((myQ) => {
+        let target = answeredItem;
+        if (!target && questionId) {
+          target = feed.find((q) => q.id === questionId);
+        }
+
+        setMyQuestions((prev) => {
+          if (!target) {
+            target = feed.find((newQ) => {
+              const oldQ = prev.find((o) => o.id === newQ.id);
+              const newAns = newQ.answer || newQ.answerText;
+              const oldAns = oldQ ? (oldQ.answer || oldQ.answerText) : null;
+              return newAns && newAns !== oldAns;
+            });
+          }
+
+          if (target && (target.answer || target.answerText)) {
+            const isMine = Boolean(
+              (target.participantId && target.participantId === guestIdRef.current) ||
+              prev.some((q) => q.id === target.id || q.text === target.text)
+            );
+            triggerNotification({
+              id: target.id + "_" + Date.now(),
+              targetId: target.id,
+              isMyQuestion: isMine,
+              questionText: target.text || target.questionText || "Question",
+              replyText: target.answer || target.answerText,
+              senderName: target.participantName || target.displayName || "Participant",
+            });
+          }
+
+          return prev.map((myQ) => {
             const match = feed.find(
               (f) =>
                 f.id === myQ.id ||
@@ -92,8 +165,8 @@ export default function ResultPage() {
               };
             }
             return myQ;
-          })
-        );
+          });
+        });
       }
     });
 
@@ -255,7 +328,67 @@ export default function ResultPage() {
   }
 
   return (
-    <main className="min-h-screen pb-16 bg-[#FAFAF9] dark:bg-[#080915] flex flex-col">
+    <main className="min-h-screen pb-16 bg-[#FAFAF9] dark:bg-[#080915] flex flex-col relative">
+      {qaNotification && (
+        <div
+          role="alert"
+          className={`fixed top-4 sm:top-6 right-4 sm:right-6 z-50 max-w-sm sm:max-w-md w-full transition-all duration-300 transform translate-y-0 opacity-100 shadow-2xl rounded-2xl p-4 border backdrop-blur-md animate-in slide-in-from-top-4 ${
+            qaNotification.isMyQuestion
+              ? "bg-[#0B1528]/95 dark:bg-[#070D1B]/95 border-emerald-500/60 text-white shadow-emerald-500/25 ring-2 ring-emerald-500/30"
+              : "bg-white/95 dark:bg-[#12142B]/95 border-[#E1E1DC] dark:border-[#2A2E52] text-gray-900 dark:text-gray-100 shadow-xl"
+          }`}
+        >
+          <div className="flex items-start gap-3">
+            <div
+              className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 text-lg shadow-sm ${
+                qaNotification.isMyQuestion
+                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
+                  : "bg-primary/10 text-primary border border-primary/20"
+              }`}
+            >
+              {qaNotification.isMyQuestion ? "🔔" : "💬"}
+            </div>
+
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between gap-1 mb-1">
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={`text-xs font-bold uppercase tracking-wider ${
+                      qaNotification.isMyQuestion ? "text-emerald-400" : "text-primary"
+                    }`}
+                  >
+                    {qaNotification.isMyQuestion
+                      ? "Host Replied to Your Question!"
+                      : "New Host Answer in Q&A"}
+                  </span>
+                  {qaNotification.isMyQuestion && (
+                    <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.2 rounded font-bold">
+                      You
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setQaNotification(null)}
+                  className="text-gray-400 hover:text-gray-200 text-sm font-bold p-1 leading-none rounded hover:bg-white/10"
+                  title="Dismiss notification"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <p className="text-xs text-gray-300 dark:text-gray-300 line-clamp-1 mb-2 italic">
+                "{qaNotification.questionText}"
+              </p>
+
+              <div className="p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-xs text-emerald-100 font-medium leading-relaxed">
+                <span className="font-bold text-emerald-400 mr-1.5">Host Reply:</span>
+                {qaNotification.replyText}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       <Navbar userName={displayName} logoutLabel={undefined} />
 
       <div className="flex-1 flex flex-col items-center justify-center px-4 sm:px-6 py-10">

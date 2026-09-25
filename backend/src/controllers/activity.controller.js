@@ -641,9 +641,18 @@ async function answerQa(req, res) {
   activity.changed("qaFeed", true);
   await activity.save();
 
-  emitToSession(activity.linkId, "qa-answered", { qaFeed: activity.qaFeed });
+  emitToSession(activity.linkId, "qa-answered", {
+    qaFeed: activity.qaFeed,
+    answeredItem: feed[itemIndex],
+    questionId,
+  });
 
-  res.json({ success: true, qaFeed: activity.qaFeed });
+  res.json({
+    success: true,
+    qaFeed: activity.qaFeed,
+    answeredItem: feed[itemIndex],
+    questionId,
+  });
 }
 
 async function deleteQa(req, res) {

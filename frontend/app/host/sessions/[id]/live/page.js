@@ -409,10 +409,13 @@ export default function LivePage() {
           ...prev,
           activity: { ...prev.activity, qaFeed: feed },
         }));
+        const answeredItem = feed.find((q) => q.id === qId);
         if (results?.activity?.linkId) {
           getSocket().emit("qa-answered", {
             linkId: results.activity.linkId,
             qaFeed: feed,
+            answeredItem,
+            questionId: qId,
           });
         }
       }

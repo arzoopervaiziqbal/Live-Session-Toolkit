@@ -77,10 +77,10 @@ function initSocket(server, clientUrl) {
     });
 
     // Host answers / updates Q&A
-    socket.on("qa-answered", ({ linkId, qaFeed }) => {
+    socket.on("qa-answered", ({ linkId, qaFeed, answeredItem, questionId }) => {
       const lid = String(linkId || currentLinkId).toLowerCase().trim();
       if (!lid) return;
-      io.to(`session-${lid}`).emit("qa-answered", { qaFeed });
+      io.to(`session-${lid}`).emit("qa-answered", { qaFeed, answeredItem, questionId });
     });
 
     // Screen Sharing: Host starts
