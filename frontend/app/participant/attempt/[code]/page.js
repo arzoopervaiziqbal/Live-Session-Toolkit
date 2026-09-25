@@ -587,15 +587,13 @@ export default function AttemptPage() {
         setShowQaModal(true);
         setUnreadQaCount(0);
       }}
-      className={`fixed ${
-        hasQuestions ? "bottom-20 sm:bottom-24" : "bottom-6"
-      } right-4 sm:right-6 z-40 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-xl rounded-full px-3.5 py-2 sm:px-4 sm:py-2.5 flex items-center gap-1.5 border border-emerald-400/40 transition-all hover:scale-105 active:scale-95 cursor-pointer relative`}
+      className="fixed bottom-5 right-5 sm:bottom-6 sm:right-6 z-50 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-2xl rounded-full px-4 py-2.5 flex items-center gap-2 border border-emerald-400/40 transition-all hover:scale-105 active:scale-95 cursor-pointer relative"
       aria-label="Open Q&A"
     >
-      <span className="text-sm sm:text-base">💬</span>
+      <span className="text-base sm:text-lg">💬</span>
       <span className="text-xs font-bold tracking-wide">Q&A</span>
       {unreadQaCount > 0 && (
-        <span className="bg-rose-500 text-white text-[10px] font-extrabold px-1.5 py-0.5 min-w-[20px] rounded-full flex items-center justify-center border-2 border-white dark:border-[#080915] shadow-md animate-pulse">
+        <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] font-extrabold px-1.5 py-0.5 min-w-[20px] rounded-full flex items-center justify-center border-2 border-white dark:border-[#080915] shadow-md animate-pulse">
           +{unreadQaCount}
         </span>
       )}
@@ -736,7 +734,7 @@ export default function AttemptPage() {
     const qaList = parseQaFeed(activity.qaFeed);
 
     return (
-      <main className="min-h-screen pb-16 bg-[#FAFAF9] dark:bg-[#080915] relative">
+      <main className="min-h-screen pb-28 sm:pb-32 bg-[#FAFAF9] dark:bg-[#080915] relative">
         {notificationBanner}
         <Navbar userName={guestName || undefined} logoutLabel={undefined} />
 
@@ -1014,7 +1012,7 @@ export default function AttemptPage() {
   const timerWarning = timeLeft <= 20 && timeLeft > 10;
 
   return (
-    <main className="min-h-screen pb-16 bg-[#FAFAF9] dark:bg-[#080915] relative">
+    <main className="min-h-screen pb-28 sm:pb-32 bg-[#FAFAF9] dark:bg-[#080915] relative">
       {notificationBanner}
       <Navbar userName={guestName || undefined} logoutLabel={undefined} />
 
