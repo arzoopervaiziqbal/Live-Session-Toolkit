@@ -285,11 +285,20 @@ async function reportProctorAlert(req, res) {
     return res.status(400).json({ error: "Participant identification required." });
   }
 
-  const query = participantId
-    ? { activityId: activity._id, _id: participantId }
-    : { activityId: activity._id, guestId };
-
-  const participant = await Participant.findOne({ where: query });
+  let participant = null;
+  if (guestId) {
+    participant = await Participant.findOne({
+      where: { activityId: activity._id, guestId: String(guestId) },
+    });
+  }
+  if (!participant && participantId) {
+    participant = await Participant.findOne({
+      where: {
+        activityId: activity._id,
+        [Op.or]: [{ _id: String(participantId) }, { guestId: String(participantId) }],
+      },
+    });
+  }
   if (!participant) {
     return res.status(404).json({ error: "Participant not found." });
   }

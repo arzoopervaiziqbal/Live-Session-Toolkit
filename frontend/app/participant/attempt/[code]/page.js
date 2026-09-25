@@ -45,6 +45,8 @@ export default function AttemptPage() {
   // Anti-Cheat & Proctoring States
   const [isDisqualified, setIsDisqualified] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
+  const [participantDbId, setParticipantDbId] = useState(null);
+  const participantDbIdRef = useRef(null);
   const [disqualificationReason, setDisqualificationReason] = useState("");
   const [proctorWarning, setProctorWarning] = useState(null);
   const [hostNotice, setHostNotice] = useState(null);
@@ -124,6 +126,10 @@ export default function AttemptPage() {
       .joinByCode(params.code, storedGuestId, storedName || "Guest")
       .then((data) => {
         setActivity(data.activity);
+        if (data.participantId) {
+          setParticipantDbId(data.participantId);
+          participantDbIdRef.current = data.participantId;
+        }
         if (data.status === "disqualified") {
           setIsDisqualified(true);
           setDisqualificationReason("You were previously disqualified by the host.");
@@ -133,6 +139,31 @@ export default function AttemptPage() {
       })
       .catch(() => router.replace("/participant/join"));
   }, [params.code, router]);
+
+  // When locked, periodically check status so if host approves via dashboard, student unlocks immediately!
+  useEffect(() => {
+    if (!isLocked || isDisqualified || !params.code || !guestId) return;
+
+    const pollInterval = setInterval(() => {
+      api
+        .joinByCode(params.code, guestId, guestName || "Guest")
+        .then((data) => {
+          if (data.status === "active") {
+            setIsLocked(false);
+            setProctorWarning(null);
+            setHostNotice("Host approved! You can now continue your quiz.");
+            setTimeout(() => setHostNotice(null), 8000);
+          } else if (data.status === "disqualified") {
+            setIsLocked(false);
+            setIsDisqualified(true);
+            setDisqualificationReason("Disqualified by host.");
+          }
+        })
+        .catch(() => {});
+    }, 2000);
+
+    return () => clearInterval(pollInterval);
+  }, [isLocked, isDisqualified, params.code, guestId, guestName]);
 
   // Real-time Socket.IO Connection: Q&A Toggle and Screen Sharing
   useEffect(() => {
@@ -222,12 +253,13 @@ export default function AttemptPage() {
       setActivity((prev) => (prev ? { ...prev, qaFeed: parseQaFeed(qaFeed) } : prev));
     });
 
-    // Host Decision on Proctor Violation (continue or fail student)
+    // Host Decision on Proctor Violation (continue / approve or fail student)
     socket.on("quiz-proctor-decision", (payload) => {
       const myGuestId = guestIdRef.current || guestId;
+      const myDbId = participantDbIdRef.current;
       const isTarget =
-        (payload?.guestId && payload.guestId === myGuestId) ||
-        (payload?.participantId && payload.participantId === myGuestId);
+        (payload?.guestId && (payload.guestId === myGuestId || payload.guestId === myDbId)) ||
+        (payload?.participantId && (payload.participantId === myGuestId || payload.participantId === myDbId));
       if (!isTarget) return;
 
       if (payload?.decision === "fail") {
@@ -237,11 +269,11 @@ export default function AttemptPage() {
           payload?.reason || "Disqualified by host for switching screens or modifying the exam window."
         );
         setProctorWarning(null);
-      } else if (payload?.decision === "continue") {
+      } else if (payload?.decision === "continue" || payload?.decision === "approve") {
         setIsLocked(false);
         setProctorWarning(null);
-        setHostNotice(payload?.message || "Host reviewed your activity and permitted you to continue the quiz. Please keep this tab active!");
-        setTimeout(() => setHostNotice(null), 7000);
+        setHostNotice(payload?.message || "Host approved! You can now continue your quiz.");
+        setTimeout(() => setHostNotice(null), 8000);
       } else if (payload?.decision === "lock") {
         setIsLocked(true);
       }
@@ -385,12 +417,13 @@ export default function AttemptPage() {
       socket.off("screen-share-ice");
       socket.off("screen-frame");
       socket.off("screen-share-stopped");
+      socket.off("quiz-proctor-decision");
       if (peerConnectionRef.current) {
         peerConnectionRef.current.close();
         peerConnectionRef.current = null;
       }
     };
-  }, [params.code, guestId, guestName]);
+  }, [params.code, guestId, guestName, activity?._id, activity?.linkId]);
 
   // Ensure remote stream is bound whenever video mounts or expands
   useEffect(() => {
@@ -455,7 +488,7 @@ export default function AttemptPage() {
         activityId: activity?._id,
         sessionId: activity?.sessionId,
         guestId: guestIdRef.current || guestId,
-        participantId: guestIdRef.current || guestId,
+        participantId: participantDbIdRef.current || guestIdRef.current || guestId,
         displayName: guestName || "Student",
         violationType: type,
         message,
