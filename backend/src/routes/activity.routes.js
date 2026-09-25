@@ -20,5 +20,6 @@ router.get("/activities/:id/export", ctrl.exportCsv);
 router.patch("/activities/:id/qa/:questionId", ctrl.answerQa);
 router.delete("/activities/:id/qa/:questionId", ctrl.deleteQa);
 router.patch("/activities/:id/toggle-qa", ctrl.toggleQa);
+router.post("/activities/:id/proctor-decision", ctrl.decideProctorViolation);
 
 module.exports = router;

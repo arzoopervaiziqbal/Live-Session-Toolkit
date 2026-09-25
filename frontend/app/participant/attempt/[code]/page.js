@@ -38,8 +38,16 @@ export default function AttemptPage() {
   const [qaQuestion, setQaQuestion] = useState("");
   const [qaSending, setQaSending] = useState(false);
   const [qaMsg, setQaMsg] = useState("");
-  const [qaNotification, setQaNotification] = useState(null);
   const [unreadQaCount, setUnreadQaCount] = useState(0);
+
+  // Anti-Cheat & Proctoring States
+  const [isDisqualified, setIsDisqualified] = useState(false);
+  const [disqualificationReason, setDisqualificationReason] = useState("");
+  const [proctorWarning, setProctorWarning] = useState(null);
+  const [hostNotice, setHostNotice] = useState(null);
+  const [proctorViolationsCount, setProctorViolationsCount] = useState(0);
+  const proctorCooldownRef = useRef(0);
+  const initialDimensionsRef = useRef({ width: 0, height: 0 });
 
   // Screen Sharing State for Participant
   const [hostSharingScreen, setHostSharingScreen] = useState(false);
@@ -111,7 +119,13 @@ export default function AttemptPage() {
     setGuestName(storedName || "");
     api
       .joinByCode(params.code, storedGuestId, storedName || "Guest")
-      .then((data) => setActivity(data.activity))
+      .then((data) => {
+        setActivity(data.activity);
+        if (data.status === "disqualified") {
+          setIsDisqualified(true);
+          setDisqualificationReason("You were previously disqualified by the host.");
+        }
+      })
       .catch(() => router.replace("/participant/join"));
   }, [params.code, router]);
 
@@ -201,6 +215,27 @@ export default function AttemptPage() {
 
     socket.on("qa-deleted", ({ qaFeed }) => {
       setActivity((prev) => (prev ? { ...prev, qaFeed: parseQaFeed(qaFeed) } : prev));
+    });
+
+    // Host Decision on Proctor Violation (continue or fail student)
+    socket.on("quiz-proctor-decision", (payload) => {
+      const myGuestId = guestIdRef.current || guestId;
+      const isTarget =
+        (payload?.guestId && payload.guestId === myGuestId) ||
+        (payload?.participantId && payload.participantId === myGuestId);
+      if (!isTarget) return;
+
+      if (payload?.decision === "fail") {
+        setIsDisqualified(true);
+        setDisqualificationReason(
+          payload?.reason || "Disqualified by host for switching tabs or altering screen dimensions during quiz."
+        );
+        setProctorWarning(null);
+      } else if (payload?.decision === "continue") {
+        setProctorWarning(null);
+        setHostNotice(payload?.message || "Host reviewed your activity and permitted you to continue the quiz. Please keep this tab active!");
+        setTimeout(() => setHostNotice(null), 7000);
+      }
     });
 
     // Screen sharing started by host
@@ -378,7 +413,91 @@ export default function AttemptPage() {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [activity, submitting]);
+  }, [activity, submitting, isDisqualified]);
+
+  // Anti-Cheat Proctoring Monitor: Tab switch, Window blur, Screen cropping/resizing
+  useEffect(() => {
+    if (!hasQuestions || isDisqualified || submitting) return;
+
+    if (typeof window !== "undefined") {
+      initialDimensionsRef.current = {
+        width: window.innerWidth,
+        height: window.innerHeight,
+      };
+    }
+
+    function triggerViolation(type, message) {
+      const now = Date.now();
+      if (now - proctorCooldownRef.current < 4000) return;
+      proctorCooldownRef.current = now;
+
+      setProctorViolationsCount((c) => c + 1);
+      setProctorWarning({
+        type,
+        message,
+        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+      });
+
+      const targetCode = activity?.linkId || params.code;
+      const payload = {
+        linkId: targetCode,
+        activityId: activity?._id,
+        guestId: guestIdRef.current || guestId,
+        participantId: guestIdRef.current || guestId,
+        displayName: guestName || "Student",
+        violationType: type,
+        message,
+      };
+
+      try {
+        const socket = getSocket();
+        socket.emit("quiz-proctor-alert", payload);
+      } catch (_) {}
+
+      api.reportProctorViolation(targetCode, payload).catch(() => {});
+    }
+
+    function handleVisibilityChange() {
+      if (document.hidden) {
+        triggerViolation(
+          "tab_switch",
+          "Student switched browser tab or minimized the exam window."
+        );
+      }
+    }
+
+    function handleBlur() {
+      triggerViolation(
+        "window_blur",
+        "Student switched window focus or clicked outside the exam."
+      );
+    }
+
+    function handleResize() {
+      const init = initialDimensionsRef.current;
+      if (!init.width || !init.height) return;
+
+      const dw = init.width - window.innerWidth;
+      const dh = init.height - window.innerHeight;
+
+      if (dw > 160 || dh > 160) {
+        triggerViolation(
+          "screen_crop",
+          "Student cropped or resized the screen to split-screen/smaller dimensions."
+        );
+      }
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("blur", handleBlur);
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("blur", handleBlur);
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [hasQuestions, isDisqualified, submitting, activity, params.code, guestId, guestName]);
 
   function handleTimeExpired() {
     const act = activityRef.current;
@@ -568,6 +687,61 @@ export default function AttemptPage() {
       </div>
     </div>
   ) : null;
+
+  if (isDisqualified) {
+    return (
+      <main className="min-h-screen bg-[#FAFAF9] dark:bg-[#080915] text-gray-900 dark:text-gray-100 flex flex-col justify-between">
+        <Navbar userName={guestName || undefined} logoutLabel={undefined} />
+
+        <div className="max-w-md mx-auto px-6 py-12 text-center w-full my-auto">
+          <div className="card p-8 bg-white dark:bg-[#12142B] border-2 border-rose-500 shadow-2xl rounded-3xl">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-rose-500/15 border-2 border-rose-500/30 flex items-center justify-center text-3xl">
+              🚫
+            </div>
+
+            <div className="inline-block px-3 py-1 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 font-bold text-xs uppercase tracking-wider mb-2 border border-rose-500/20">
+              Exam Disqualified
+            </div>
+
+            <h1 className="font-display text-xl sm:text-2xl font-black text-rose-600 dark:text-rose-400 mb-2">
+              Quiz Attempt Terminated
+            </h1>
+
+            <p className="text-xs text-gray-600 dark:text-gray-300 mb-6 leading-relaxed">
+              {disqualificationReason || "The host has marked your attempt as FAILED due to tab switching or screen cropping violations."}
+            </p>
+
+            <div className="p-4 rounded-2xl bg-rose-500/5 dark:bg-rose-950/20 border border-rose-500/20 mb-6 text-left space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-gray-500 font-medium">Participant:</span>
+                <span className="font-bold text-gray-900 dark:text-gray-100">{guestName || "Student"}</span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-gray-500 font-medium">Exam Status:</span>
+                <span className="font-bold text-rose-500">Failed (Disqualified)</span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-gray-500 font-medium">Final Score:</span>
+                <span className="font-mono font-bold text-rose-600">0 / {activity?.questions?.length || 0} Marks (0%)</span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => router.push("/participant/join")}
+              className="w-full btn-primary text-xs py-3 font-bold bg-rose-600 hover:bg-rose-700 text-white border-0 shadow-md cursor-pointer"
+            >
+              Exit Session
+            </button>
+          </div>
+        </div>
+
+        <div className="py-4 text-center text-[11px] text-gray-400">
+          Live Session Toolkit Anti-Cheat Proctoring
+        </div>
+      </main>
+    );
+  }
 
   if (!activity) {
     return (
@@ -1060,6 +1234,61 @@ export default function AttemptPage() {
   return (
     <main className="min-h-screen pb-28 sm:pb-32 bg-[#FAFAF9] dark:bg-[#080915] relative">
       {notificationBanner}
+
+      {/* Proctoring Warning Banner */}
+      {proctorWarning && (
+        <div
+          role="alert"
+          className="fixed top-6 left-1/2 -translate-x-1/2 z-50 max-w-lg w-[92%] bg-[#1A0B0E]/95 border-2 border-rose-500 text-white shadow-2xl rounded-2xl p-4 backdrop-blur-md animate-in slide-in-from-top-4 ring-4 ring-rose-500/20"
+        >
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-400 flex items-center justify-center text-xl shrink-0">
+              ⚠️
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between gap-1 mb-1">
+                <span className="text-xs font-bold text-rose-400 uppercase tracking-wider">
+                  Anti-Cheat Warning (#{proctorViolationsCount})
+                </span>
+                <span className="text-[10px] text-gray-400 font-mono">
+                  {proctorWarning.time}
+                </span>
+              </div>
+              <div className="text-xs font-bold text-white mb-1">
+                {proctorWarning.type === "screen_crop"
+                  ? "Screen Cropping / Window Resize Detected!"
+                  : "Tab Switch / Window Blur Detected!"}
+              </div>
+              <p className="text-[11px] text-gray-300 mb-3 leading-relaxed">
+                You are not allowed to crop the screen or switch tabs during this quiz. Your host has been notified in real time and has the option to fail your exam or allow you to continue.
+              </p>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setProctorWarning(null)}
+                  className="text-xs bg-rose-600 hover:bg-rose-500 text-white font-bold py-1.5 px-3.5 rounded-lg transition-colors cursor-pointer"
+                >
+                  Return to Exam Screen
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Host Decision Notice */}
+      {hostNotice && (
+        <div
+          role="alert"
+          className="fixed top-6 left-1/2 -translate-x-1/2 z-50 max-w-md w-[92%] bg-[#0A1A12]/95 border-2 border-emerald-500 text-white shadow-2xl rounded-2xl p-4 backdrop-blur-md animate-in slide-in-from-top-4 flex items-center gap-3"
+        >
+          <span className="text-2xl">✓</span>
+          <div className="text-xs font-medium text-emerald-200">
+            {hostNotice}
+          </div>
+        </div>
+      )}
+
       <Navbar userName={guestName || undefined} logoutLabel={undefined} />
 
       <div className="max-w-xl mx-auto px-4 sm:px-6 py-8">

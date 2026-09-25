@@ -520,17 +520,32 @@ async function getResults(req, res) {
 
     const percentage = totalScorable > 0 ? Math.round((correctCount / totalScorable) * 100) : 0;
 
+    let violations = [];
+    if (Array.isArray(p.proctorViolations)) {
+      violations = p.proctorViolations;
+    } else if (typeof p.proctorViolations === "string") {
+      try {
+        violations = JSON.parse(p.proctorViolations) || [];
+      } catch (_) {}
+    }
+
+    const isDisqualified = p.status === "disqualified";
+
     return {
       participantId: p._id,
       displayName: p.displayName,
       guestId: p.guestId,
       joinedAt: p.joinedAt,
       isDone,
+      status: p.status || "active",
+      isDisqualified,
+      proctorViolations: violations,
+      violationCount: violations.length,
       submittedAt: latestSubmission,
       score: {
-        correct: correctCount,
+        correct: isDisqualified ? 0 : correctCount,
         total: totalScorable,
-        percentage,
+        percentage: isDisqualified ? 0 : percentage,
       },
       answers: studentAnswers,
     };
@@ -693,6 +708,82 @@ async function toggleQa(req, res) {
   res.json({ success: true, allowQa: activity.allowQa, activity });
 }
 
+// POST /api/activities/:id/proctor-decision
+async function decideProctorViolation(req, res) {
+  const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+  if (!activity) return res.status(404).json({ error: "Activity not found." });
+
+  const { participantId, guestId, decision, reason } = req.body;
+  if (!participantId && !guestId) {
+    return res.status(400).json({ error: "Participant identification required." });
+  }
+
+  const query = participantId
+    ? { activityId: activity._id, _id: participantId }
+    : { activityId: activity._id, guestId };
+
+  const participant = await Participant.findOne({ where: query });
+  if (!participant) {
+    return res.status(404).json({ error: "Participant not found." });
+  }
+
+  if (decision === "fail") {
+    participant.status = "disqualified";
+    await participant.save();
+
+    const payload = {
+      linkId: activity.linkId,
+      activityId: activity._id,
+      participantId: participant._id,
+      guestId: participant.guestId,
+      displayName: participant.displayName,
+      decision: "fail",
+      reason: reason || "Disqualified by host for switching tabs or altering screen dimensions during quiz.",
+      timestamp: new Date().toISOString(),
+    };
+
+    try {
+      const aliasRooms = new Set([
+        String(activity.linkId || "").toLowerCase().trim(),
+        String(activity._id || "").toLowerCase().trim(),
+        String(activity.sessionId || "").toLowerCase().trim(),
+      ]);
+      aliasRooms.forEach((lid) => {
+        if (lid) emitToSession(lid, "quiz-proctor-decision", payload);
+      });
+    } catch (_) {}
+
+    return res.json({ success: true, decision: "fail", status: "disqualified", participant });
+  } else {
+    participant.status = "active";
+    await participant.save();
+
+    const payload = {
+      linkId: activity.linkId,
+      activityId: activity._id,
+      participantId: participant._id,
+      guestId: participant.guestId,
+      displayName: participant.displayName,
+      decision: "continue",
+      message: "Host reviewed your activity and allowed you to continue the quiz.",
+      timestamp: new Date().toISOString(),
+    };
+
+    try {
+      const aliasRooms = new Set([
+        String(activity.linkId || "").toLowerCase().trim(),
+        String(activity._id || "").toLowerCase().trim(),
+        String(activity.sessionId || "").toLowerCase().trim(),
+      ]);
+      aliasRooms.forEach((lid) => {
+        if (lid) emitToSession(lid, "quiz-proctor-decision", payload);
+      });
+    } catch (_) {}
+
+    return res.json({ success: true, decision: "continue", status: "active", participant });
+  }
+}
+
 module.exports = {
   createActivity,
   uploadNotes,
@@ -708,4 +799,5 @@ module.exports = {
   answerQa,
   deleteQa,
   toggleQa,
+  decideProctorViolation,
 };

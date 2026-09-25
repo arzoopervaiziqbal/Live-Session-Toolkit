@@ -114,6 +114,10 @@ export const api = {
     request(`/join/${linkId}/submit`, { method: "POST", body: { guestId, answers } }),
   postParticipantQuestion: (linkId, payload) =>
     request(`/join/${linkId}/qa`, { method: "POST", body: payload }),
+  reportProctorViolation: (linkId, payload) =>
+    request(`/join/${linkId}/proctor-alert`, { method: "POST", body: payload }),
+  submitProctorDecision: (activityId, payload) =>
+    request(`/activities/${activityId}/proctor-decision`, { method: "POST", body: payload, role: "host" }),
 };
 
 export { API_URL };

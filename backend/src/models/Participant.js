@@ -27,6 +27,14 @@ const Participant = sequelize.define("Participant", {
     type: DataTypes.DATE,
     defaultValue: DataTypes.NOW,
   },
+  status: {
+    type: DataTypes.STRING,
+    defaultValue: "active",
+  },
+  proctorViolations: {
+    type: DataTypes.JSON,
+    defaultValue: [],
+  },
 }, {
   tableName: "participants",
   timestamps: true,
@@ -42,6 +50,12 @@ const Participant = sequelize.define("Participant", {
 
 Participant.prototype.toObject = function() {
   return this.toJSON();
+};
+
+const originalParticipantSave = Participant.prototype.save;
+Participant.prototype.save = async function(options) {
+  this.changed("proctorViolations", true);
+  return originalParticipantSave.call(this, options);
 };
 
 module.exports = Participant;

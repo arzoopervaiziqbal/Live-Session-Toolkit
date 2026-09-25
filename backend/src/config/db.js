@@ -51,6 +51,12 @@ async function connectDB() {
     try {
       await sequelize.query("ALTER TABLE activities ADD COLUMN qaFeed TEXT DEFAULT '[]';");
     } catch (_) {}
+    try {
+      await sequelize.query("ALTER TABLE participants ADD COLUMN status VARCHAR(255) DEFAULT 'active';");
+    } catch (_) {}
+    try {
+      await sequelize.query("ALTER TABLE participants ADD COLUMN proctorViolations TEXT DEFAULT '[]';");
+    } catch (_) {}
   }
 
   console.log(`[db] Database tables synced successfully`);

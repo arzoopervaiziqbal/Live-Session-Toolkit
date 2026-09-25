@@ -87,6 +87,32 @@ function initSocket(server, clientUrl) {
       io.to(`session-${lid}`).emit("qa-answered", { qaFeed, answeredItem, questionId });
     });
 
+    // Anti-Cheat / Proctor Alert from Student (tab switch, window blur, screen crop/resize)
+    socket.on("quiz-proctor-alert", (payload) => {
+      const targets = new Set([
+        String(payload?.linkId || currentLinkId || "").toLowerCase().trim(),
+        String(payload?.activityId || "").toLowerCase().trim(),
+      ]);
+      targets.forEach((lid) => {
+        if (lid) {
+          io.to(`session-${lid}`).emit("quiz-proctor-alert", payload);
+        }
+      });
+    });
+
+    // Host Decision on Proctor Violation (continue or fail)
+    socket.on("quiz-proctor-decision", (payload) => {
+      const targets = new Set([
+        String(payload?.linkId || currentLinkId || "").toLowerCase().trim(),
+        String(payload?.activityId || "").toLowerCase().trim(),
+      ]);
+      targets.forEach((lid) => {
+        if (lid) {
+          io.to(`session-${lid}`).emit("quiz-proctor-decision", payload);
+        }
+      });
+    });
+
     // Screen Sharing: Host starts
     socket.on("screen-share-start", ({ linkId }) => {
       const lid = String(linkId || currentLinkId).toLowerCase().trim();

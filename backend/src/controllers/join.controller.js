@@ -114,6 +114,8 @@ async function getActivityByCode(req, res) {
   res.json({
     activity: actJson,
     participantId: participant._id,
+    status: participant.status || "active",
+    proctorViolations: participant.proctorViolations || [],
   });
 }
 
@@ -129,6 +131,20 @@ async function submitResponses(req, res) {
     where: { activityId: activity._id, guestId },
   });
   if (!participant) return res.status(400).json({ error: "Join the session before submitting." });
+
+  if (participant.status === "disqualified") {
+    return res.status(403).json({
+      error: "You have been disqualified by the host for switching tabs or modifying the screen.",
+      disqualified: true,
+      result: {
+        score: 0,
+        total: (activity.questions || []).length,
+        percentage: 0,
+        disqualified: true,
+        reason: "Disqualified by host due to screen cropping or tab switching violations.",
+      },
+    });
+  }
 
   if (!answers || typeof answers !== "object") {
     return res.status(400).json({ error: "Answers are required." });
@@ -259,5 +275,79 @@ async function postParticipantQuestion(req, res) {
   res.status(201).json({ success: true, item: newQ, qaFeed: updatedFeed });
 }
 
-module.exports = { getActivityByCode, submitResponses, postParticipantQuestion };
+// POST /api/join/:linkId/proctor-alert
+async function reportProctorAlert(req, res) {
+  const activity = await findActivityByCode(req.params.linkId);
+  if (!activity) return res.status(404).json({ error: "Session not found." });
+
+  const { guestId, participantId, displayName, violationType, message } = req.body;
+  if (!guestId && !participantId) {
+    return res.status(400).json({ error: "Participant identification required." });
+  }
+
+  const query = participantId
+    ? { activityId: activity._id, _id: participantId }
+    : { activityId: activity._id, guestId };
+
+  const participant = await Participant.findOne({ where: query });
+  if (!participant) {
+    return res.status(404).json({ error: "Participant not found." });
+  }
+
+  let violations = [];
+  if (Array.isArray(participant.proctorViolations)) {
+    violations = [...participant.proctorViolations];
+  } else if (typeof participant.proctorViolations === "string") {
+    try {
+      violations = JSON.parse(participant.proctorViolations) || [];
+    } catch (_) {}
+  }
+
+  const newAlert = {
+    id: `viol-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    participantId: participant._id,
+    guestId: participant.guestId,
+    displayName: participant.displayName || displayName || "Student",
+    violationType: violationType || "tab_switch",
+    message: message || "Switched tab or altered screen dimensions during quiz.",
+    timestamp: new Date().toISOString(),
+  };
+
+  violations.push(newAlert);
+  participant.proctorViolations = violations;
+  participant.changed("proctorViolations", true);
+  await participant.save();
+
+  // Broadcast in real-time to host
+  try {
+    const aliasRooms = new Set([
+      String(activity.linkId || "").toLowerCase().trim(),
+      String(activity._id || "").toLowerCase().trim(),
+      String(activity.sessionId || "").toLowerCase().trim(),
+      String(req.params.linkId || "").toLowerCase().trim(),
+    ]);
+
+    aliasRooms.forEach((r) => {
+      if (r) {
+        emitToSession(r, "quiz-proctor-alert", newAlert);
+      }
+    });
+  } catch (err) {
+    console.warn("[join.controller] emit proctor alert error:", err);
+  }
+
+  res.json({
+    success: true,
+    status: participant.status || "active",
+    totalViolations: violations.length,
+    alert: newAlert,
+  });
+}
+
+module.exports = {
+  getActivityByCode,
+  submitResponses,
+  postParticipantQuestion,
+  reportProctorAlert,
+};
 

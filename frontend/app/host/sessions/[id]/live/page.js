@@ -42,6 +42,33 @@ export default function LivePage() {
   const [hostQaToast, setHostQaToast] = useState(null);
   const hostToastTimerRef = useRef(null);
 
+  // Anti-Cheat Proctoring Alerts State
+  const [proctorAlerts, setProctorAlerts] = useState([]);
+  const [activeProctorModal, setActiveProctorModal] = useState(null);
+  const [decisionSubmitting, setDecisionSubmitting] = useState(false);
+
+  function playUrgentHostAlarm() {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        const ctx = new AudioCtx();
+        const now = ctx.currentTime;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sawtooth";
+        osc.frequency.setValueAtTime(880, now);
+        osc.frequency.setValueAtTime(440, now + 0.15);
+        osc.frequency.setValueAtTime(880, now + 0.3);
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.5);
+      }
+    } catch (_) {}
+  }
+
   function playHostChime() {
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -153,6 +180,33 @@ export default function LivePage() {
         return {
           ...prev,
           activity: { ...prev.activity, allowQa: Boolean(allowQa) },
+        };
+      });
+    });
+
+    // Anti-Cheat / Proctor Alert from student (tab switch, blur, crop/resize)
+    socket.on("quiz-proctor-alert", (alert) => {
+      playUrgentHostAlarm();
+      setProctorAlerts((prev) => [alert, ...prev.filter((a) => a.id !== alert.id)]);
+      setActiveProctorModal(alert);
+
+      // Increment student violation count in local results
+      setResults((prev) => {
+        if (!prev || !prev.students) return prev;
+        return {
+          ...prev,
+          students: prev.students.map((s) => {
+            const isMatch =
+              (s.guestId && s.guestId === alert.guestId) ||
+              (s.participantId && s.participantId === alert.participantId);
+            if (isMatch) {
+              return {
+                ...s,
+                violationCount: (s.violationCount || 0) + 1,
+              };
+            }
+            return s;
+          }),
         };
       });
     });
@@ -277,6 +331,64 @@ export default function LivePage() {
     navigator.clipboard?.writeText(link);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
+  }
+
+  async function handleProctorDecision(alert, decision) {
+    if (!alert || !activityId || decisionSubmitting) return;
+    setDecisionSubmitting(true);
+    try {
+      await api.submitProctorDecision(activityId, {
+        participantId: alert.participantId,
+        guestId: alert.guestId,
+        decision,
+        reason:
+          decision === "fail"
+            ? `Disqualified by host for ${alert.violationType === "screen_crop" ? "screen cropping/resizing" : "switching tabs"} during the quiz.`
+            : undefined,
+      });
+
+      const socket = getSocket();
+      socket.emit("quiz-proctor-decision", {
+        linkId: results?.activity?.linkId,
+        activityId,
+        participantId: alert.participantId,
+        guestId: alert.guestId,
+        displayName: alert.displayName,
+        decision,
+        reason:
+          decision === "fail"
+            ? `Disqualified by host for ${alert.violationType === "screen_crop" ? "screen cropping/resizing" : "switching tabs"} during the quiz.`
+            : undefined,
+      });
+
+      setResults((prev) => {
+        if (!prev || !prev.students) return prev;
+        return {
+          ...prev,
+          students: prev.students.map((s) => {
+            const isMatch =
+              (s.guestId && s.guestId === alert.guestId) ||
+              (s.participantId && s.participantId === alert.participantId);
+            if (isMatch) {
+              return {
+                ...s,
+                status: decision === "fail" ? "disqualified" : "active",
+                isDisqualified: decision === "fail",
+                score: decision === "fail" ? { ...s.score, correct: 0, percentage: 0 } : s.score,
+              };
+            }
+            return s;
+          }),
+        };
+      });
+
+      setProctorAlerts((prev) => prev.filter((a) => a.id !== alert.id));
+      setActiveProctorModal(null);
+    } catch (err) {
+      console.error("Failed to submit proctor decision:", err);
+    } finally {
+      setDecisionSubmitting(false);
+    }
   }
 
   function handleExportCsv() {
@@ -531,6 +643,82 @@ export default function LivePage() {
 
   return (
     <main className="min-h-screen pb-16 bg-[#FAFAF9] dark:bg-[#080915] relative">
+      {/* Real-time Anti-Cheat Violation Modal for Host */}
+      {activeProctorModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in">
+          <div className="card w-full max-w-lg p-6 bg-white dark:bg-[#12142B] border-2 border-rose-500 shadow-2xl rounded-2xl relative">
+            <div className="flex items-center justify-between pb-3 mb-4 border-b border-rose-500/30">
+              <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+                <span className="text-xl animate-bounce">🚨</span>
+                <h3 className="font-display font-black text-base uppercase tracking-wide">
+                  Anti-Cheat Violation Alert!
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveProctorModal(null)}
+                className="text-gray-400 hover:text-gray-600 text-sm font-bold p-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-900 dark:text-rose-200 mb-4">
+              <div className="flex items-center justify-between text-xs mb-2 font-bold">
+                <span>Student: {activeProctorModal.displayName || "Participant"}</span>
+                <span className="font-mono text-[10px] bg-rose-500/20 px-2 py-0.5 rounded text-rose-600 dark:text-rose-300">
+                  {activeProctorModal.timestamp ? new Date(activeProctorModal.timestamp).toLocaleTimeString() : "Just now"}
+                </span>
+              </div>
+              <div className="text-sm font-bold mb-1 text-gray-900 dark:text-gray-100">
+                {activeProctorModal.violationType === "screen_crop"
+                  ? "Screen Cropping / Window Resize Attempt"
+                  : activeProctorModal.violationType === "window_blur"
+                  ? "Window Focus Lost / Switched Application"
+                  : "Browser Tab Switched"}
+              </div>
+              <div className="text-xs text-gray-700 dark:text-gray-300 italic">
+                "{activeProctorModal.message}"
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-600 dark:text-gray-300 mb-5 leading-relaxed">
+              The student modified their screen dimensions or switched away from the quiz window. You have the option to allow them to continue or immediately fail & disqualify them.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                disabled={decisionSubmitting}
+                onClick={() => handleProctorDecision(activeProctorModal, "continue")}
+                className="btn-secondary py-3 px-4 rounded-xl font-bold text-xs flex flex-col items-center justify-center gap-1 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 cursor-pointer"
+              >
+                <div className="flex items-center gap-1.5 font-bold text-sm">
+                  <span>✓</span> Allow to Continue
+                </div>
+                <span className="text-[10px] text-gray-500 font-normal">
+                  Forgive & keep quiz active
+                </span>
+              </button>
+
+              <button
+                type="button"
+                disabled={decisionSubmitting}
+                onClick={() => handleProctorDecision(activeProctorModal, "fail")}
+                className="btn-primary py-3 px-4 rounded-xl font-bold text-xs flex flex-col items-center justify-center gap-1 bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-700 hover:to-red-700 text-white border-0 shadow-md cursor-pointer"
+              >
+                <div className="flex items-center gap-1.5 font-bold text-sm">
+                  <span>🚫</span> Fail Student
+                </div>
+                <span className="text-[10px] text-rose-100 font-normal">
+                  Disqualify & set score to 0%
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {hostQaToast && (
         <div
           role="alert"
@@ -973,21 +1161,32 @@ export default function LivePage() {
                         </div>
                       </div>
 
-                      {/* Status & Marks */}
-                      <div className="flex items-center gap-2.5">
+                      {/* Status, Anti-Cheat Violations, & Marks */}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {/* Proctoring Badges */}
+                        {student.isDisqualified || student.status === "disqualified" ? (
+                          <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-rose-500/15 text-rose-500 border border-rose-500/30 flex items-center gap-1">
+                            <span>🚫</span> Failed (Disqualified)
+                          </span>
+                        ) : (student.violationCount > 0 || (student.proctorViolations && student.proctorViolations.length > 0)) ? (
+                          <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/30 flex items-center gap-1">
+                            <span>⚠️</span> {student.violationCount || student.proctorViolations?.length} Violations
+                          </span>
+                        ) : null}
+
                         {student.isDone ? (
                           <div className="flex items-center gap-2">
                             <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/30 flex items-center gap-1">
                               <span>✓</span> Done
                             </span>
 
-                            {/* Direct Marks Display: e.g. 4 / 5 Marks (80%) */}
+                            {/* Direct Marks Display */}
                             <div className="px-3 py-1 rounded-xl bg-primary/10 border border-primary/25 text-primary text-xs font-bold flex items-center gap-1.5 shadow-xs">
                               <span className="font-mono text-sm font-extrabold text-primary">
-                                {student.score ? student.score.correct : 0} / {student.score?.total || results.activity?.questions?.length || 0} Marks
+                                {student.isDisqualified ? 0 : (student.score ? student.score.correct : 0)} / {student.score?.total || results.activity?.questions?.length || 0} Marks
                               </span>
                               <span className="text-[11px] font-semibold text-primary/80">
-                                ({student.score?.percentage ?? Math.round(((student.score?.correct || 0) / (results.activity?.questions?.length || 1)) * 100)}%)
+                                ({student.isDisqualified ? 0 : (student.score?.percentage ?? Math.round(((student.score?.correct || 0) / (results.activity?.questions?.length || 1)) * 100))}%)
                               </span>
                             </div>
                           </div>
@@ -997,6 +1196,37 @@ export default function LivePage() {
                             Attempting
                           </span>
                         )}
+
+                        {/* Host Anti-Cheat Action Controls */}
+                        <div className="flex items-center gap-1.5 ml-1">
+                          {student.isDisqualified || student.status === "disqualified" ? (
+                            <button
+                              type="button"
+                              onClick={() => handleProctorDecision({ participantId: student.participantId, guestId: student.guestId, displayName: student.displayName }, "continue")}
+                              className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 border border-emerald-500/30 transition-colors cursor-pointer"
+                              title="Restore and allow student"
+                            >
+                              Allow / Restore
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveProctorModal({
+                                  participantId: student.participantId,
+                                  guestId: student.guestId,
+                                  displayName: student.displayName,
+                                  violationType: "tab_switch",
+                                  message: "Host manually flagged or failed student.",
+                                });
+                              }}
+                              className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/20 transition-colors cursor-pointer"
+                              title="Fail student"
+                            >
+                              Fail Student
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
