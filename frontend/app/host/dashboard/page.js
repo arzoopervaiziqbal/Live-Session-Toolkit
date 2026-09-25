@@ -6,6 +6,7 @@ import Navbar from "../../../components/Navbar";
 import { useLang } from "../../../contexts/LangContext";
 import { useAuthGuard } from "../../../lib/useAuthGuard";
 import { api } from "../../../lib/api";
+import { getSocket } from "../../../lib/socket";
 
 const STATUS_COLORS = {
   draft: "text-amber-500 bg-amber-500/10 border-amber-500/30",
@@ -66,6 +67,158 @@ export default function HostDashboard() {
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [studentsFilter, setStudentsFilter] = useState("all"); // 'all' | 'done' | 'pending'
   const [studentsSearch, setStudentsSearch] = useState("");
+
+  // Proctor & Screen Switch Alert states on Host Dashboard
+  const [proctorAlerts, setProctorAlerts] = useState([]);
+  const [activeProctorModal, setActiveProctorModal] = useState(null);
+  const [decisionSubmitting, setDecisionSubmitting] = useState(false);
+
+  function playUrgentHostAlarm() {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        const ctx = new AudioCtx();
+        const now = ctx.currentTime;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sawtooth";
+        osc.frequency.setValueAtTime(880, now);
+        osc.frequency.setValueAtTime(440, now + 0.15);
+        osc.frequency.setValueAtTime(880, now + 0.3);
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.5);
+      }
+    } catch (_) {}
+  }
+
+  async function handleProctorDecision(alert, decision) {
+    if (!alert || decisionSubmitting) return;
+    let actId = alert.activityId || selectedSessionForStudents?.activityId;
+    if (!actId && alert.linkId) {
+      const match = sessions.find(
+        (s) => s.linkId === alert.linkId || s.linkCode === alert.linkId || s._id === alert.linkId
+      );
+      if (match) actId = match.activityId;
+    }
+    if (!actId && alert.sessionId) {
+      const match = sessions.find((s) => s._id === alert.sessionId);
+      if (match) actId = match.activityId;
+    }
+
+    setDecisionSubmitting(true);
+    const dec = decision === "approve" ? "continue" : decision;
+
+    try {
+      if (actId) {
+        await api.submitProctorDecision(actId, {
+          participantId: alert.participantId,
+          guestId: alert.guestId,
+          decision: dec,
+          reason:
+            dec === "fail"
+              ? `Disqualified by host for switching tabs or altering screen dimensions during quiz.`
+              : undefined,
+        }).catch((err) => console.warn("API proctor decision failed:", err));
+      }
+
+      const socket = getSocket();
+      socket.emit("quiz-proctor-decision", {
+        linkId: alert.linkId,
+        activityId: actId,
+        sessionId: alert.sessionId,
+        participantId: alert.participantId,
+        guestId: alert.guestId,
+        displayName: alert.displayName,
+        decision: dec,
+      });
+
+      setProctorAlerts((prev) =>
+        prev.filter((a) => a.guestId !== alert.guestId && a.participantId !== alert.participantId && a.id !== alert.id)
+      );
+      if (
+        activeProctorModal &&
+        (activeProctorModal.guestId === alert.guestId ||
+          activeProctorModal.participantId === alert.participantId ||
+          activeProctorModal.id === alert.id)
+      ) {
+        setActiveProctorModal(null);
+      }
+
+      setStudentsData((prev) => {
+        if (!prev || !prev.students) return prev;
+        return {
+          ...prev,
+          students: prev.students.map((s) => {
+            const isMatch =
+              (s.guestId && (s.guestId === alert.guestId || s.guestId === alert.participantId)) ||
+              (s.participantId && (s.participantId === alert.participantId || s.participantId === alert.guestId));
+            if (isMatch) {
+              return {
+                ...s,
+                status: dec === "fail" ? "disqualified" : dec === "lock" ? "locked" : "active",
+                isDisqualified: dec === "fail",
+              };
+            }
+            return s;
+          }),
+        };
+      });
+    } catch (err) {
+      console.error("Failed to submit proctor decision from dashboard:", err);
+    } finally {
+      setDecisionSubmitting(false);
+    }
+  }
+
+  // Socket.IO Proctoring Monitor on Host Dashboard
+  useEffect(() => {
+    if (!ready) return;
+    const socket = getSocket();
+
+    function joinRooms() {
+      socket.emit("join-session", { linkId: "hosts", role: "host" });
+      sessions.forEach((s) => {
+        const ids = [s._id, s.activityId, s.linkId, s.linkCode].filter(Boolean);
+        ids.forEach((id) => {
+          socket.emit("join-session", { linkId: id, role: "host" });
+        });
+      });
+    }
+
+    joinRooms();
+    socket.on("connect", joinRooms);
+
+    function onProctorAlert(alert) {
+      playUrgentHostAlarm();
+      setProctorAlerts((prev) => [alert, ...prev.filter((a) => a.id !== alert.id && a.guestId !== alert.guestId)]);
+      setActiveProctorModal(alert);
+    }
+
+    function onProctorDecision(payload) {
+      setProctorAlerts((prev) =>
+        prev.filter((a) => a.guestId !== payload.guestId && a.participantId !== payload.participantId)
+      );
+      if (
+        activeProctorModal &&
+        (activeProctorModal.guestId === payload.guestId || activeProctorModal.participantId === payload.participantId)
+      ) {
+        setActiveProctorModal(null);
+      }
+    }
+
+    socket.on("quiz-proctor-alert", onProctorAlert);
+    socket.on("quiz-proctor-decision", onProctorDecision);
+
+    return () => {
+      socket.off("connect", joinRooms);
+      socket.off("quiz-proctor-alert", onProctorAlert);
+      socket.off("quiz-proctor-decision", onProctorDecision);
+    };
+  }, [ready, sessions]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -289,6 +442,136 @@ export default function HostDashboard() {
       <Navbar userName={user?.name} onLogout={logout} logoutLabel={t.logout_btn} />
 
       <div className="max-w-4xl mx-auto px-6 py-8">
+        {/* Real-time Anti-Cheat Violation Modal for Host on Dashboard */}
+        {activeProctorModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in">
+            <div className="card w-full max-w-lg p-6 bg-white dark:bg-[#12142B] border-2 border-rose-500 shadow-2xl rounded-2xl relative">
+              <div className="flex items-center justify-between pb-3 mb-4 border-b border-rose-500/30">
+                <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+                  <span className="text-xl animate-bounce">🚨</span>
+                  <h3 className="font-display font-black text-base uppercase tracking-wide">
+                    Screen Switch Detected - Approval Required!
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveProctorModal(null)}
+                  className="text-gray-400 hover:text-gray-600 text-sm font-bold p-1 cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-900 dark:text-rose-200 mb-4">
+                <div className="flex items-center justify-between text-xs mb-2 font-bold">
+                  <span>Student: {activeProctorModal.displayName || "Participant"}</span>
+                  <span className="font-mono text-[10px] bg-rose-500/20 px-2 py-0.5 rounded text-rose-600 dark:text-rose-300">
+                    {activeProctorModal.timestamp ? new Date(activeProctorModal.timestamp).toLocaleTimeString() : "Just now"}
+                  </span>
+                </div>
+                <div className="text-sm font-bold mb-1 text-gray-900 dark:text-gray-100">
+                  {activeProctorModal.violationType === "screen_crop"
+                    ? "Screen Cropping / Window Resize Attempt"
+                    : activeProctorModal.violationType === "window_blur"
+                    ? "Window Focus Lost / Switched Application"
+                    : "Browser Tab Switched"}
+                </div>
+                <div className="text-xs text-gray-700 dark:text-gray-300 italic">
+                  "{activeProctorModal.message}"
+                </div>
+              </div>
+
+              <p className="text-xs text-gray-600 dark:text-gray-300 mb-5 leading-relaxed">
+                The student switched away from their quiz window. Their quiz is currently <strong>paused & locked</strong> waiting for your decision. You have the option to allow {activeProctorModal.displayName} to continue the quiz or fail them.
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  disabled={decisionSubmitting}
+                  onClick={() => handleProctorDecision(activeProctorModal, "continue")}
+                  className="btn-secondary py-3 px-4 rounded-xl font-bold text-xs flex flex-col items-center justify-center gap-1 border-emerald-500/50 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 cursor-pointer shadow-sm transition-all"
+                >
+                  <div className="flex items-center gap-1.5 font-extrabold text-sm text-emerald-600 dark:text-emerald-400">
+                    <span>✓</span> Allow {activeProctorModal.displayName || "Student"} to Continue Quiz
+                  </div>
+                  <span className="text-[10px] text-gray-500 dark:text-gray-400 font-normal">
+                    Unlock quiz and let student continue
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={decisionSubmitting}
+                  onClick={() => handleProctorDecision(activeProctorModal, "fail")}
+                  className="btn-primary py-3 px-4 rounded-xl font-bold text-xs flex flex-col items-center justify-center gap-1 bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-700 hover:to-red-700 text-white border-0 shadow-md cursor-pointer transition-all"
+                >
+                  <div className="flex items-center gap-1.5 font-extrabold text-sm">
+                    <span>🚫</span> Fail {activeProctorModal.displayName || "Student"}
+                  </div>
+                  <span className="text-[10px] text-rose-100 font-normal">
+                    Disqualify student with 0% mark
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Persistent Screen Switch Alert Banner on Host Dashboard */}
+        {proctorAlerts.length > 0 && (
+          <div className="mb-6 p-4 sm:p-5 rounded-2xl bg-amber-500/15 dark:bg-amber-950/40 border-2 border-amber-500 text-amber-950 dark:text-amber-100 shadow-xl ring-4 ring-amber-500/20 animate-in fade-in">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <span className="text-3xl animate-bounce shrink-0">🔒</span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500 text-white font-black text-[10px] uppercase tracking-wide">
+                      Host Action Required
+                    </span>
+                    <h3 className="font-bold text-sm sm:text-base text-gray-900 dark:text-gray-100">
+                      Screen Switch Detected - Student Quiz Paused!
+                    </h3>
+                  </div>
+                  <p className="text-xs text-amber-800 dark:text-amber-300 mt-1">
+                    Student switched screens or left the quiz window. Quiz is paused and waiting for your permission.
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
+                {proctorAlerts.map((alert) => (
+                  <div
+                    key={alert.id || alert.guestId}
+                    className="flex flex-wrap items-center gap-2 bg-white dark:bg-[#12142B] p-2.5 rounded-xl border border-amber-500/40 shadow-sm"
+                  >
+                    <span className="font-bold text-xs text-gray-900 dark:text-gray-100 px-1">
+                      {alert.displayName}:
+                    </span>
+                    <button
+                      type="button"
+                      disabled={decisionSubmitting}
+                      onClick={() => handleProctorDecision(alert, "continue")}
+                      className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs shadow-sm transition-all flex items-center gap-1 cursor-pointer"
+                      title={`Allow ${alert.displayName} to continue quiz`}
+                    >
+                      <span>✓</span> Allow {alert.displayName} to Continue Quiz
+                    </button>
+                    <button
+                      type="button"
+                      disabled={decisionSubmitting}
+                      onClick={() => handleProctorDecision(alert, "fail")}
+                      className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-extrabold text-xs shadow-sm transition-all flex items-center gap-1 cursor-pointer"
+                      title={`Fail and disqualify ${alert.displayName}`}
+                    >
+                      <span>🚫</span> Fail {alert.displayName}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Top Header with Create Session and Create Test options */}
         <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
           <div>
@@ -1299,9 +1582,61 @@ export default function HostDashboard() {
                                     </div>
                                   </div>
 
-                                  {/* Right: Status and Marks */}
+                                  {/* Right: Status, Proctor Controls and Marks */}
                                   <div className="flex items-center gap-2">
-                                    {student.isDone ? (
+                                    {student.status === "locked" ||
+                                    (!student.isDone &&
+                                      proctorAlerts.some(
+                                        (a) =>
+                                          (a.guestId && a.guestId === student.guestId) ||
+                                          (a.participantId && a.participantId === student.participantId)
+                                      )) ? (
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/40 animate-pulse">
+                                          🔒 Screen Switched
+                                        </span>
+                                        <button
+                                          type="button"
+                                          disabled={decisionSubmitting}
+                                          onClick={() =>
+                                            handleProctorDecision(
+                                              {
+                                                participantId: student.participantId,
+                                                guestId: student.guestId,
+                                                displayName: student.displayName,
+                                                activityId: selectedSessionForStudents?.activityId,
+                                                linkId: selectedSessionForStudents?.linkId,
+                                              },
+                                              "continue"
+                                            )
+                                          }
+                                          className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[11px] shadow-sm transition-all flex items-center gap-1 cursor-pointer"
+                                          title={`Allow ${student.displayName} to continue quiz`}
+                                        >
+                                          <span>✓</span> Allow {student.displayName} to Continue Quiz
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={decisionSubmitting}
+                                          onClick={() =>
+                                            handleProctorDecision(
+                                              {
+                                                participantId: student.participantId,
+                                                guestId: student.guestId,
+                                                displayName: student.displayName,
+                                                activityId: selectedSessionForStudents?.activityId,
+                                                linkId: selectedSessionForStudents?.linkId,
+                                              },
+                                              "fail"
+                                            )
+                                          }
+                                          className="px-2 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-[11px] shadow-sm transition-all flex items-center gap-1 cursor-pointer"
+                                          title={`Fail ${student.displayName}`}
+                                        >
+                                          <span>🚫</span> Fail
+                                        </button>
+                                      </div>
+                                    ) : student.isDone ? (
                                       <div className="flex items-center gap-1.5">
                                         <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/30">
                                           ✓ Done

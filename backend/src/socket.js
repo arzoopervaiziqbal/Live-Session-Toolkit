@@ -30,6 +30,7 @@ function initSocket(server, clientUrl) {
       const sessionData = activeSessions.get(currentLinkId);
 
       if (userRole === "host") {
+        socket.join("room-hosts");
         sessionData.hostSocketId = socket.id;
         // Inform host of current viewers count
         socket.emit("viewer-count-update", { count: sessionData.viewers.size });
@@ -99,6 +100,7 @@ function initSocket(server, clientUrl) {
           io.to(`session-${lid}`).emit("quiz-proctor-alert", payload);
         }
       });
+      io.to("room-hosts").emit("quiz-proctor-alert", payload);
     });
 
     // Host Decision on Proctor Violation (continue, fail, lock)
@@ -113,6 +115,7 @@ function initSocket(server, clientUrl) {
           io.to(`session-${lid}`).emit("quiz-proctor-decision", payload);
         }
       });
+      io.to("room-hosts").emit("quiz-proctor-decision", payload);
     });
 
     // Screen Sharing: Host starts
@@ -220,7 +223,7 @@ function getIO() {
 
 function emitToSession(linkId, event, data) {
   if (!io || !linkId) return;
-  const room = `session-${String(linkId).toLowerCase().trim()}`;
+  const room = String(linkId).toLowerCase().trim() === "hosts" ? "room-hosts" : `session-${String(linkId).toLowerCase().trim()}`;
   io.to(room).emit(event, data);
 }
 

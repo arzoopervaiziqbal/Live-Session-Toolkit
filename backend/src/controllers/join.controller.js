@@ -346,6 +346,7 @@ async function reportProctorAlert(req, res) {
         emitToSession(r, "quiz-proctor-alert", newAlert);
       }
     });
+    emitToSession("hosts", "quiz-proctor-alert", newAlert);
   } catch (err) {
     console.warn("[join.controller] emit proctor alert error:", err);
   }

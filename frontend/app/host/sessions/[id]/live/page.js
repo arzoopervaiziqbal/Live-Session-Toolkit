@@ -712,7 +712,7 @@ export default function LivePage() {
                 className="btn-secondary py-3 px-4 rounded-xl font-bold text-xs flex flex-col items-center justify-center gap-1 border-emerald-500/50 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 cursor-pointer shadow-sm transition-all"
               >
                 <div className="flex items-center gap-1.5 font-extrabold text-sm text-emerald-600 dark:text-emerald-400">
-                  <span>✓</span> Approve & Allow to Continue
+                  <span>✓</span> Allow {activeProctorModal.displayName || "Student"} to Continue Quiz
                 </div>
                 <span className="text-[10px] text-gray-500 dark:text-gray-400 font-normal">
                   Unlock quiz and let student continue
@@ -820,9 +820,9 @@ export default function LivePage() {
                         )
                       }
                       className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs shadow-sm transition-all flex items-center gap-1 cursor-pointer"
-                      title="Approve student and let them continue"
+                      title={`Allow ${s.displayName} to continue quiz`}
                     >
-                      <span>✓</span> Approve & Continue
+                      <span>✓</span> Allow {s.displayName} to Continue Quiz
                     </button>
                     <button
                       type="button"
@@ -1330,9 +1330,9 @@ export default function LivePage() {
                                       )
                                     }
                                     className="text-[11px] font-extrabold px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs transition-colors cursor-pointer flex items-center gap-1"
-                                    title="Approve student and let them continue"
+                                    title={`Allow ${student.displayName} to continue quiz`}
                                   >
-                                    <span>✓</span> Approve & Continue
+                                    <span>✓</span> Allow {student.displayName} to Continue Quiz
                                   </button>
                                   <button
                                     type="button"

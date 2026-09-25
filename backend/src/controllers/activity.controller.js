@@ -758,6 +758,7 @@ async function decideProctorViolation(req, res) {
         String(activity.linkId || "").toLowerCase().trim(),
         String(activity._id || "").toLowerCase().trim(),
         String(activity.sessionId || "").toLowerCase().trim(),
+        "hosts",
       ]);
       aliasRooms.forEach((lid) => {
         if (lid) emitToSession(lid, "quiz-proctor-decision", payload);
@@ -786,6 +787,7 @@ async function decideProctorViolation(req, res) {
         String(activity.linkId || "").toLowerCase().trim(),
         String(activity._id || "").toLowerCase().trim(),
         String(activity.sessionId || "").toLowerCase().trim(),
+        "hosts",
       ]);
       aliasRooms.forEach((lid) => {
         if (lid) emitToSession(lid, "quiz-proctor-decision", payload);
@@ -814,6 +816,7 @@ async function decideProctorViolation(req, res) {
         String(activity.linkId || "").toLowerCase().trim(),
         String(activity._id || "").toLowerCase().trim(),
         String(activity.sessionId || "").toLowerCase().trim(),
+        "hosts",
       ]);
       aliasRooms.forEach((lid) => {
         if (lid) emitToSession(lid, "quiz-proctor-decision", payload);
