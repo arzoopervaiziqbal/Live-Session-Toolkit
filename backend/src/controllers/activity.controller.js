@@ -738,6 +738,7 @@ async function decideProctorViolation(req, res) {
       guestId: participant.guestId,
       displayName: participant.displayName,
       decision: "fail",
+      status: "disqualified",
       reason: reason || "Disqualified by host for switching tabs or altering screen dimensions during quiz.",
       timestamp: new Date().toISOString(),
     };
@@ -754,6 +755,34 @@ async function decideProctorViolation(req, res) {
     } catch (_) {}
 
     return res.json({ success: true, decision: "fail", status: "disqualified", participant });
+  } else if (decision === "lock") {
+    participant.status = "locked";
+    await participant.save();
+
+    const payload = {
+      linkId: activity.linkId,
+      activityId: activity._id,
+      participantId: participant._id,
+      guestId: participant.guestId,
+      displayName: participant.displayName,
+      decision: "lock",
+      status: "locked",
+      reason: reason || "Quiz locked by host due to screen switch.",
+      timestamp: new Date().toISOString(),
+    };
+
+    try {
+      const aliasRooms = new Set([
+        String(activity.linkId || "").toLowerCase().trim(),
+        String(activity._id || "").toLowerCase().trim(),
+        String(activity.sessionId || "").toLowerCase().trim(),
+      ]);
+      aliasRooms.forEach((lid) => {
+        if (lid) emitToSession(lid, "quiz-proctor-decision", payload);
+      });
+    } catch (_) {}
+
+    return res.json({ success: true, decision: "lock", status: "locked", participant });
   } else {
     participant.status = "active";
     await participant.save();
@@ -765,6 +794,7 @@ async function decideProctorViolation(req, res) {
       guestId: participant.guestId,
       displayName: participant.displayName,
       decision: "continue",
+      status: "active",
       message: "Host reviewed your activity and allowed you to continue the quiz.",
       timestamp: new Date().toISOString(),
     };

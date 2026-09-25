@@ -202,6 +202,7 @@ export default function LivePage() {
             if (isMatch) {
               return {
                 ...s,
+                status: s.status === "disqualified" ? "disqualified" : "locked",
                 violationCount: (s.violationCount || 0) + 1,
               };
             }
@@ -370,9 +371,11 @@ export default function LivePage() {
               (s.guestId && s.guestId === alert.guestId) ||
               (s.participantId && s.participantId === alert.participantId);
             if (isMatch) {
+              const newStatus =
+                decision === "fail" ? "disqualified" : decision === "lock" ? "locked" : "active";
               return {
                 ...s,
-                status: decision === "fail" ? "disqualified" : "active",
+                status: newStatus,
                 isDisqualified: decision === "fail",
                 score: decision === "fail" ? { ...s.score, correct: 0, percentage: 0 } : s.score,
               };
@@ -1164,7 +1167,11 @@ export default function LivePage() {
                       {/* Status, Anti-Cheat Violations, & Marks */}
                       <div className="flex flex-wrap items-center gap-2">
                         {/* Proctoring Badges */}
-                        {student.isDisqualified || student.status === "disqualified" ? (
+                        {student.status === "locked" ? (
+                          <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/40 flex items-center gap-1.5 animate-pulse">
+                            <span>🔒</span> Screen Switched (Paused)
+                          </span>
+                        ) : student.isDisqualified || student.status === "disqualified" ? (
                           <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-rose-500/15 text-rose-500 border border-rose-500/30 flex items-center gap-1">
                             <span>🚫</span> Failed (Disqualified)
                           </span>
@@ -1199,32 +1206,61 @@ export default function LivePage() {
 
                         {/* Host Anti-Cheat Action Controls */}
                         <div className="flex items-center gap-1.5 ml-1">
-                          {student.isDisqualified || student.status === "disqualified" ? (
+                          {student.status === "locked" ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleProctorDecision({ participantId: student.participantId, guestId: student.guestId, displayName: student.displayName }, "continue")}
+                                className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs transition-colors cursor-pointer"
+                                title="Allow student to continue quiz"
+                              >
+                                ✓ Allow to Continue
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleProctorDecision({ participantId: student.participantId, guestId: student.guestId, displayName: student.displayName }, "fail")}
+                                className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-rose-600 hover:bg-rose-500 text-white shadow-xs transition-colors cursor-pointer"
+                                title="Do not allow - fail student"
+                              >
+                                🚫 Fail Student
+                              </button>
+                            </>
+                          ) : student.isDisqualified || student.status === "disqualified" ? (
                             <button
                               type="button"
                               onClick={() => handleProctorDecision({ participantId: student.participantId, guestId: student.guestId, displayName: student.displayName }, "continue")}
                               className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 border border-emerald-500/30 transition-colors cursor-pointer"
                               title="Restore and allow student"
                             >
-                              Allow / Restore
+                              Restore & Allow
                             </button>
                           ) : (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setActiveProctorModal({
-                                  participantId: student.participantId,
-                                  guestId: student.guestId,
-                                  displayName: student.displayName,
-                                  violationType: "tab_switch",
-                                  message: "Host manually flagged or failed student.",
-                                });
-                              }}
-                              className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/20 transition-colors cursor-pointer"
-                              title="Fail student"
-                            >
-                              Fail Student
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleProctorDecision({ participantId: student.participantId, guestId: student.guestId, displayName: student.displayName }, "lock")}
+                                className="text-[11px] font-medium px-2 py-1 rounded-md bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 border border-amber-500/25 transition-colors cursor-pointer"
+                                title="Lock / Pause student quiz"
+                              >
+                                Pause Quiz
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActiveProctorModal({
+                                    participantId: student.participantId,
+                                    guestId: student.guestId,
+                                    displayName: student.displayName,
+                                    violationType: "tab_switch",
+                                    message: "Host manually deciding on student exam permission.",
+                                  });
+                                }}
+                                className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/20 transition-colors cursor-pointer"
+                                title="Fail student"
+                              >
+                                Fail Student
+                              </button>
+                            </>
                           )}
                         </div>
                       </div>

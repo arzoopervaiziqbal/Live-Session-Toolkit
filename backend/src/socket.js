@@ -92,6 +92,7 @@ function initSocket(server, clientUrl) {
       const targets = new Set([
         String(payload?.linkId || currentLinkId || "").toLowerCase().trim(),
         String(payload?.activityId || "").toLowerCase().trim(),
+        String(payload?.sessionId || "").toLowerCase().trim(),
       ]);
       targets.forEach((lid) => {
         if (lid) {
@@ -100,11 +101,12 @@ function initSocket(server, clientUrl) {
       });
     });
 
-    // Host Decision on Proctor Violation (continue or fail)
+    // Host Decision on Proctor Violation (continue, fail, lock)
     socket.on("quiz-proctor-decision", (payload) => {
       const targets = new Set([
         String(payload?.linkId || currentLinkId || "").toLowerCase().trim(),
         String(payload?.activityId || "").toLowerCase().trim(),
+        String(payload?.sessionId || "").toLowerCase().trim(),
       ]);
       targets.forEach((lid) => {
         if (lid) {

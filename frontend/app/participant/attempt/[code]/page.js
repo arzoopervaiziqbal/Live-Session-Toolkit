@@ -44,6 +44,7 @@ export default function AttemptPage() {
 
   // Anti-Cheat & Proctoring States
   const [isDisqualified, setIsDisqualified] = useState(false);
+  const [isLocked, setIsLocked] = useState(false);
   const [disqualificationReason, setDisqualificationReason] = useState("");
   const [proctorWarning, setProctorWarning] = useState(null);
   const [hostNotice, setHostNotice] = useState(null);
@@ -126,6 +127,8 @@ export default function AttemptPage() {
         if (data.status === "disqualified") {
           setIsDisqualified(true);
           setDisqualificationReason("You were previously disqualified by the host.");
+        } else if (data.status === "locked") {
+          setIsLocked(true);
         }
       })
       .catch(() => router.replace("/participant/join"));
@@ -229,14 +232,18 @@ export default function AttemptPage() {
 
       if (payload?.decision === "fail") {
         setIsDisqualified(true);
+        setIsLocked(false);
         setDisqualificationReason(
-          payload?.reason || "Disqualified by host for switching tabs or altering screen dimensions during quiz."
+          payload?.reason || "Disqualified by host for switching screens or modifying the exam window."
         );
         setProctorWarning(null);
       } else if (payload?.decision === "continue") {
+        setIsLocked(false);
         setProctorWarning(null);
         setHostNotice(payload?.message || "Host reviewed your activity and permitted you to continue the quiz. Please keep this tab active!");
         setTimeout(() => setHostNotice(null), 7000);
+      } else if (payload?.decision === "lock") {
+        setIsLocked(true);
       }
     });
 
@@ -401,7 +408,7 @@ export default function AttemptPage() {
 
   // 60-second Countdown Timer per question (ONLY when has questions!)
   useEffect(() => {
-    if (!activity || !activity.questions || activity.questions.length === 0 || submitting) return;
+    if (!activity || !activity.questions || activity.questions.length === 0 || submitting || isDisqualified || isLocked) return;
 
     const interval = setInterval(() => {
       setTimeLeft((prev) => {
@@ -415,7 +422,7 @@ export default function AttemptPage() {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [activity, submitting, isDisqualified]);
+  }, [activity, submitting, isDisqualified, isLocked]);
 
   // Anti-Cheat Proctoring Monitor: Tab switch, Window blur, Screen cropping/resizing
   useEffect(() => {
@@ -430,9 +437,11 @@ export default function AttemptPage() {
 
     function triggerViolation(type, message) {
       const now = Date.now();
-      if (now - proctorCooldownRef.current < 4000) return;
+      if (now - proctorCooldownRef.current < 3000) return;
       proctorCooldownRef.current = now;
 
+      // Immediately lock student exam screen while host decides
+      setIsLocked(true);
       setProctorViolationsCount((c) => c + 1);
       setProctorWarning({
         type,
@@ -444,6 +453,7 @@ export default function AttemptPage() {
       const payload = {
         linkId: targetCode,
         activityId: activity?._id,
+        sessionId: activity?.sessionId,
         guestId: guestIdRef.current || guestId,
         participantId: guestIdRef.current || guestId,
         displayName: guestName || "Student",
@@ -1234,6 +1244,38 @@ export default function AttemptPage() {
   return (
     <main className="min-h-screen pb-28 sm:pb-32 bg-[#FAFAF9] dark:bg-[#080915] relative">
       {notificationBanner}
+
+      {/* Screen Switch Lock Overlay - Student waiting for host decision */}
+      {isLocked && !isDisqualified && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in">
+          <div className="card w-full max-w-md p-6 bg-white dark:bg-[#12142B] border-2 border-amber-500 shadow-2xl rounded-3xl text-center">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-500/15 border-2 border-amber-500/30 flex items-center justify-center text-3xl animate-pulse">
+              🔒
+            </div>
+            <div className="inline-block px-3 py-1 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold text-xs uppercase tracking-wider mb-2 border border-amber-500/20">
+              Quiz Paused by Proctor
+            </div>
+            <h2 className="font-display text-xl font-bold text-gray-900 dark:text-gray-100 mb-2">
+              Screen Switch Detected!
+            </h2>
+            <p className="text-xs text-gray-600 dark:text-gray-300 mb-4 leading-relaxed">
+              You switched screens or left the exam window. Your quiz is currently locked.
+            </p>
+            <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-amber-900 dark:text-amber-300 text-xs mb-4">
+              <div className="flex items-center justify-center gap-2 font-bold mb-1">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+                <span>Waiting for Host Permission...</span>
+              </div>
+              <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                A live notification has been sent to your host. Your host is reviewing whether you can continue the quiz or fail.
+              </p>
+            </div>
+            <div className="text-[11px] text-gray-400">
+              Please remain on this screen. It will automatically unlock as soon as your host approves.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Proctoring Warning Banner */}
       {proctorWarning && (

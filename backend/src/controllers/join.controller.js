@@ -303,6 +303,10 @@ async function reportProctorAlert(req, res) {
     } catch (_) {}
   }
 
+  if (participant.status !== "disqualified") {
+    participant.status = "locked";
+  }
+
   const newAlert = {
     id: `viol-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     participantId: participant._id,
@@ -310,6 +314,7 @@ async function reportProctorAlert(req, res) {
     displayName: participant.displayName || displayName || "Student",
     violationType: violationType || "tab_switch",
     message: message || "Switched tab or altered screen dimensions during quiz.",
+    status: participant.status,
     timestamp: new Date().toISOString(),
   };
 
