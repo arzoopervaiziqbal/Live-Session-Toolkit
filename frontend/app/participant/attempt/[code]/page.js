@@ -28,6 +28,7 @@ export default function AttemptPage() {
   const [guestName, setGuestName] = useState("");
   const [guestId, setGuestId] = useState(null);
   const [activity, setActivity] = useState(null);
+  const hasQuestions = Array.isArray(activity?.questions) && activity.questions.length > 0;
   const [currentIndex, setCurrentIndex] = useState(0);
   const [timeLeft, setTimeLeft] = useState(QUESTION_TIME_LIMIT);
   const [answers, setAnswers] = useState({});
@@ -599,8 +600,6 @@ export default function AttemptPage() {
       setQaSending(false);
     }
   }
-
-  const hasQuestions = Array.isArray(activity?.questions) && activity.questions.length > 0;
 
   const notificationBanner = qaNotification ? (
     <div
