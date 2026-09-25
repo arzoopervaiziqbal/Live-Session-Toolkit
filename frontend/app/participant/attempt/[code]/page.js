@@ -580,25 +580,35 @@ export default function AttemptPage() {
     );
   }
 
-  const floatingQaButton = activity.allowQa ? (
+  const floatingQaButton = (
     <button
       type="button"
+      id="student-floating-qa-btn"
       onClick={() => {
         setShowQaModal(true);
         setUnreadQaCount(0);
       }}
-      className="fixed bottom-5 right-5 sm:bottom-6 sm:right-6 z-50 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-2xl rounded-full px-4 py-2.5 flex items-center gap-2 border border-emerald-400/40 transition-all hover:scale-105 active:scale-95 cursor-pointer relative"
+      style={{
+        position: "fixed",
+        bottom: "24px",
+        right: "24px",
+        zIndex: 9999,
+      }}
+      className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-2xl rounded-full px-4 py-2.5 flex items-center gap-2 border border-emerald-400/40 transition-all hover:scale-105 active:scale-95 cursor-pointer"
       aria-label="Open Q&A"
     >
       <span className="text-base sm:text-lg">💬</span>
       <span className="text-xs font-bold tracking-wide">Q&A</span>
       {unreadQaCount > 0 && (
-        <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] font-extrabold px-1.5 py-0.5 min-w-[20px] rounded-full flex items-center justify-center border-2 border-white dark:border-[#080915] shadow-md animate-pulse">
+        <span
+          style={{ position: "absolute", top: "-6px", right: "-6px" }}
+          className="bg-rose-500 text-white text-[10px] font-extrabold px-1.5 py-0.5 min-w-[20px] rounded-full flex items-center justify-center border-2 border-white dark:border-[#080915] shadow-md animate-pulse"
+        >
           +{unreadQaCount}
         </span>
       )}
     </button>
-  ) : null;
+  );
 
   const qaModalElement = showQaModal ? (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
@@ -764,6 +774,23 @@ export default function AttemptPage() {
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                 Joined as {guestName || "Guest"}
               </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowQaModal(true);
+                  setUnreadQaCount(0);
+                }}
+                className="relative px-3 py-1 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+                title="Open Live Q&A"
+              >
+                <span>💬</span>
+                <span>Live Q&A</span>
+                {unreadQaCount > 0 && (
+                  <span className="bg-rose-500 text-white text-[10px] font-extrabold px-1.5 py-0.2 min-w-[18px] rounded-full flex items-center justify-center shadow-xs animate-pulse">
+                    +{unreadQaCount}
+                  </span>
+                )}
+              </button>
             </div>
           </div>
 
@@ -793,15 +820,34 @@ export default function AttemptPage() {
                   </>
                 )}
               </div>
-              {hostSharingScreen && (
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setScreenExpanded((prev) => !prev)}
-                  className="text-[11px] bg-white/10 hover:bg-white/20 text-gray-200 px-2.5 py-1 rounded-md transition-colors font-medium"
+                  onClick={() => {
+                    setShowQaModal(true);
+                    setUnreadQaCount(0);
+                  }}
+                  className="text-[11px] bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/30 px-2.5 py-1 rounded-md transition-colors font-medium flex items-center gap-1 cursor-pointer"
+                  title="Open Live Q&A"
                 >
-                  {screenExpanded ? "Minimize" : "Expand"}
+                  <span>💬</span>
+                  <span>Q&A</span>
+                  {unreadQaCount > 0 && (
+                    <span className="bg-rose-500 text-white text-[9px] font-bold px-1 py-0.2 rounded-full animate-pulse">
+                      +{unreadQaCount}
+                    </span>
+                  )}
                 </button>
-              )}
+                {hostSharingScreen && (
+                  <button
+                    type="button"
+                    onClick={() => setScreenExpanded((prev) => !prev)}
+                    className="text-[11px] bg-white/10 hover:bg-white/20 text-gray-200 px-2.5 py-1 rounded-md transition-colors font-medium"
+                  >
+                    {screenExpanded ? "Minimize" : "Expand"}
+                  </button>
+                )}
+              </div>
             </div>
 
             {hostSharingScreen ? (
@@ -1028,19 +1074,39 @@ export default function AttemptPage() {
             </h1>
           </div>
 
-          {/* 60s Countdown Timer Badge */}
-          <div
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-mono font-bold transition-all duration-300 shadow-xs ${
-              timerUrgent
-                ? "bg-rose-500/15 border-rose-500/40 text-rose-600 animate-pulse scale-105"
-                : timerWarning
-                ? "bg-amber-500/15 border-amber-500/40 text-amber-600"
-                : "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
-            }`}
-            title="60 seconds for this question"
-          >
-            <span className="text-sm">{timerUrgent ? "🔥" : "⏱️"}</span>
-            <span>{timeLeft}s</span>
+          {/* Header Actions: Q&A and 60s Countdown Timer Badge */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setShowQaModal(true);
+                setUnreadQaCount(0);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-semibold transition-all cursor-pointer"
+              title="Open Q&A"
+            >
+              <span>💬</span>
+              <span>Q&A</span>
+              {unreadQaCount > 0 && (
+                <span className="bg-rose-500 text-white text-[10px] font-extrabold px-1.5 py-0.5 rounded-full animate-pulse">
+                  +{unreadQaCount}
+                </span>
+              )}
+            </button>
+
+            <div
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-mono font-bold transition-all duration-300 shadow-xs ${
+                timerUrgent
+                  ? "bg-rose-500/15 border-rose-500/40 text-rose-600 animate-pulse scale-105"
+                  : timerWarning
+                  ? "bg-amber-500/15 border-amber-500/40 text-amber-600"
+                  : "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+              }`}
+              title="60 seconds for this question"
+            >
+              <span className="text-sm">{timerUrgent ? "🔥" : "⏱️"}</span>
+              <span>{timeLeft}s</span>
+            </div>
           </div>
         </div>
 
@@ -1300,10 +1366,10 @@ export default function AttemptPage() {
             )}
           </div>
         </div>
-
-        {floatingQaButton}
-        {qaModalElement}
       </div>
+
+      {floatingQaButton}
+      {qaModalElement}
     </main>
   );
 }
