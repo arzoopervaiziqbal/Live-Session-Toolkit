@@ -39,6 +39,7 @@ export default function AttemptPage() {
   const [qaQuestion, setQaQuestion] = useState("");
   const [qaSending, setQaSending] = useState(false);
   const [qaMsg, setQaMsg] = useState("");
+  const [qaNotification, setQaNotification] = useState(null);
   const [unreadQaCount, setUnreadQaCount] = useState(0);
 
   // Anti-Cheat & Proctoring States
