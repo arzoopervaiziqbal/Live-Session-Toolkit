@@ -122,14 +122,23 @@ export default function AttemptPage() {
     const linkId = String(params.code).toLowerCase().trim();
 
     function sendJoin() {
-      socket.emit("join-session", {
-        linkId,
-        role: "participant",
-        participantId: guestId,
-        displayName: guestName,
+      const aliasRooms = new Set([
+        String(params.code || "").toLowerCase().trim(),
+        String(activity?.linkId || "").toLowerCase().trim(),
+        String(activity?._id || "").toLowerCase().trim(),
+      ]);
+      aliasRooms.forEach((r) => {
+        if (r) {
+          socket.emit("join-session", {
+            linkId: r,
+            role: "participant",
+            participantId: guestId,
+            displayName: guestName,
+          });
+        }
       });
       // Request active screen share or buffered snapshot immediately
-      socket.emit("request-screen-sync", { linkId });
+      socket.emit("request-screen-sync", { linkId: activity?.linkId || linkId });
     }
 
     sendJoin();
@@ -146,10 +155,13 @@ export default function AttemptPage() {
         if (!prev) return prev;
         const currentFeed = parseQaFeed(prev.qaFeed);
         const incoming = qaFeed ? parseQaFeed(qaFeed) : null;
-        const exists = currentFeed.some((q) => q.id === item?.id);
+        const exists = item?.id ? currentFeed.some((q) => q.id === item.id) : false;
         const updated = incoming || (exists ? currentFeed : [...currentFeed, item]);
         return { ...prev, qaFeed: updated };
       });
+      if (item && item.participantId !== guestIdRef.current) {
+        setUnreadQaCount((prev) => prev + 1);
+      }
     });
 
     socket.on("qa-answered", ({ qaFeed, answeredItem, questionId }) => {
@@ -425,12 +437,37 @@ export default function AttemptPage() {
     if (!qaQuestion.trim()) return;
     setQaSending(true);
     setQaMsg("");
+    const targetCode = activity?.linkId || params.code;
+    const textToSend = qaQuestion.trim();
     try {
-      await api.postParticipantQuestion(params.code, {
+      const res = await api.postParticipantQuestion(targetCode, {
         participantId: guestId,
         displayName: guestName || "Participant",
-        questionText: qaQuestion.trim(),
+        questionText: textToSend,
       });
+
+      // Emit over socket directly for instant delivery across all participants & host
+      try {
+        const socket = getSocket();
+        socket.emit("qa-new-question", {
+          linkId: targetCode,
+          activityId: activity?._id,
+          item: res?.item,
+          qaFeed: res?.qaFeed,
+        });
+      } catch (_) {}
+
+      // Update local state immediately
+      if (res?.qaFeed) {
+        setActivity((prev) => (prev ? { ...prev, qaFeed: res.qaFeed } : prev));
+      } else if (res?.item) {
+        setActivity((prev) => {
+          if (!prev) return prev;
+          const currentFeed = parseQaFeed(prev.qaFeed);
+          return { ...prev, qaFeed: [...currentFeed, res.item] };
+        });
+      }
+
       setQaMsg("Question sent to host!");
       setQaQuestion("");
       setTimeout(() => {
@@ -542,6 +579,157 @@ export default function AttemptPage() {
       </main>
     );
   }
+
+  const floatingQaButton = activity.allowQa ? (
+    <button
+      type="button"
+      onClick={() => {
+        setShowQaModal(true);
+        setUnreadQaCount(0);
+      }}
+      className={`fixed ${
+        hasQuestions ? "bottom-20 sm:bottom-24" : "bottom-6"
+      } right-4 sm:right-6 z-40 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-xl rounded-full px-3.5 py-2 sm:px-4 sm:py-2.5 flex items-center gap-1.5 border border-emerald-400/40 transition-all hover:scale-105 active:scale-95 cursor-pointer relative`}
+      aria-label="Open Q&A"
+    >
+      <span className="text-sm sm:text-base">💬</span>
+      <span className="text-xs font-bold tracking-wide">Q&A</span>
+      {unreadQaCount > 0 && (
+        <span className="bg-rose-500 text-white text-[10px] font-extrabold px-1.5 py-0.5 min-w-[20px] rounded-full flex items-center justify-center border-2 border-white dark:border-[#080915] shadow-md animate-pulse">
+          +{unreadQaCount}
+        </span>
+      )}
+    </button>
+  ) : null;
+
+  const qaModalElement = showQaModal ? (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+      <div className="card w-full max-w-lg p-6 bg-white dark:bg-[#12142B] border border-[#E1E1DC] dark:border-[#2A2E52] shadow-2xl rounded-2xl relative max-h-[85vh] overflow-y-auto">
+        <div className="flex items-center justify-between pb-3 mb-4 border-b border-[#E1E1DC] dark:border-[#2A2E52]">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <h3 className="font-display font-bold text-sm text-gray-900 dark:text-gray-100">
+              Live Session Q&A
+            </h3>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowQaModal(false)}
+            className="text-gray-400 hover:text-gray-600 text-sm font-bold p-1 cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+
+        {!activity?.allowQa ? (
+          <div>
+            <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-700 dark:text-amber-400 text-xs text-center mb-4 font-medium">
+              ⚠️ The host has temporarily paused Q&A for this session. You will be able to submit questions when the host re-enables it.
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                className="btn-secondary text-xs py-1.5 px-3 cursor-pointer"
+                onClick={() => setShowQaModal(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <p className="text-xs text-gray-500 mb-3">
+              Have a doubt or question during this session? The host sees questions in real time and replies below.
+            </p>
+
+            <textarea
+              rows={3}
+              className="field text-xs sm:text-sm mb-2"
+              placeholder="Type your question for the host..."
+              value={qaQuestion}
+              onChange={(e) => setQaQuestion(e.target.value)}
+            />
+
+            {qaMsg && (
+              <div className={`text-xs mb-3 font-medium ${qaMsg.includes("sent") ? "text-emerald-600" : "text-red-500"}`}>
+                {qaMsg}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                className="btn-secondary text-xs py-2 px-3 cursor-pointer"
+                onClick={() => setShowQaModal(false)}
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                className="btn-primary text-xs py-2 px-4 shadow-xs cursor-pointer font-bold"
+                onClick={submitLiveQuestion}
+                disabled={qaSending || !qaQuestion.trim()}
+              >
+                {qaSending ? "Sending..." : "Submit Question"}
+              </button>
+            </div>
+
+            {/* Real-Time Questions and Host Replies List */}
+            {parseQaFeed(activity?.qaFeed).length > 0 && (
+              <div className="mt-5 pt-4 border-t border-[#E1E1DC] dark:border-[#2A2E52]">
+                <div className="text-xs font-bold text-gray-800 dark:text-gray-200 mb-2.5 flex items-center justify-between">
+                  <span>Questions & Host Replies ({parseQaFeed(activity?.qaFeed).length})</span>
+                  <span className="text-[10px] text-gray-400 font-mono">Live Sync</span>
+                </div>
+                <div className="max-h-56 overflow-y-auto space-y-2.5 pr-1">
+                  {parseQaFeed(activity?.qaFeed).map((q) => {
+                    const isMyQ = q.participantId === guestId;
+                    const ans = q.answer || q.answerText || "";
+                    const prompt = q.text || q.questionText || "";
+                    const name = q.participantName || q.displayName || "Participant";
+                    const answered = Boolean(q.isAnswered || ans);
+
+                    return (
+                      <div
+                        key={q.id}
+                        className={`p-3 rounded-xl border text-xs transition-all ${
+                          answered
+                            ? "bg-emerald-500/[0.04] border-emerald-500/30"
+                            : "bg-[#FAFAF9] dark:bg-[#1B1E3F]/40 border-gray-200 dark:border-[#2A2E52]"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-1 mb-1">
+                          <span className="font-semibold text-xs text-gray-900 dark:text-gray-100">
+                            {name} {isMyQ && <span className="text-primary font-bold">(You)</span>}
+                          </span>
+                          {answered ? (
+                            <span className="text-[10px] text-emerald-600 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                              ✓ Answered
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-amber-600 font-medium bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                              Pending Host
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-gray-700 dark:text-gray-200 mb-1.5">"{prompt}"</div>
+                        {answered && (
+                          <div className="mt-1.5 p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-900 dark:text-emerald-300">
+                            <span className="font-bold mr-1">Host Response:</span>
+                            {ans || "Question marked as answered by host."}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  ) : null;
 
   // IF NO QUESTIONS: RENDER DEDICATED LIVE ROOM (Screen Share + Live Q&A)
   if (!hasQuestions) {
@@ -813,6 +1001,8 @@ export default function AttemptPage() {
             </div>
           </div>
         </div>
+        {floatingQaButton}
+        {qaModalElement}
       </main>
     );
   }
@@ -1113,154 +1303,8 @@ export default function AttemptPage() {
           </div>
         </div>
 
-        {/* Floating Q&A Button for Participant (When Q&A is Allowed) */}
-        {activity?.allowQa && (
-          <button
-            type="button"
-            onClick={() => {
-              setShowQaModal(true);
-              setUnreadQaCount(0);
-            }}
-            className="fixed bottom-6 right-6 z-40 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2.5 rounded-full shadow-lg flex items-center gap-2 transition-all hover:scale-105 border border-emerald-400/30 relative"
-          >
-            <span>💬</span> Ask Host (Q&A)
-            {unreadQaCount > 0 && (
-              <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] font-bold rounded-full h-5 w-5 flex items-center justify-center border-2 border-white dark:border-[#080915] animate-pulse">
-                {unreadQaCount}
-              </span>
-            )}
-          </button>
-        )}
-
-        {/* Q&A Modal */}
-        {showQaModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-            <div className="card w-full max-w-lg p-6 bg-white dark:bg-[#12142B] border border-[#E1E1DC] dark:border-[#2A2E52] shadow-2xl rounded-2xl relative max-h-[85vh] overflow-y-auto">
-              <div className="flex items-center justify-between pb-3 mb-4 border-b border-[#E1E1DC] dark:border-[#2A2E52]">
-                <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                  <h3 className="font-display font-bold text-sm text-gray-900 dark:text-gray-100">
-                    Live Session Q&A
-                  </h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowQaModal(false)}
-                  className="text-gray-400 hover:text-gray-600 text-sm font-bold p-1"
-                >
-                  ✕
-                </button>
-              </div>
-
-              {!activity?.allowQa ? (
-                <div>
-                  <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-700 dark:text-amber-400 text-xs text-center mb-4 font-medium">
-                    ⚠️ The host has temporarily paused Q&A for this session. You will be able to submit questions when the host re-enables it.
-                  </div>
-                  <div className="flex justify-end">
-                    <button
-                      type="button"
-                      className="btn-secondary text-xs py-1.5 px-3"
-                      onClick={() => setShowQaModal(false)}
-                    >
-                      Close
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <p className="text-xs text-gray-500 mb-3">
-                    Have a doubt or question during this session? The host sees questions in real time and replies below.
-                  </p>
-
-                  <textarea
-                    rows={3}
-                    className="field text-xs sm:text-sm mb-2"
-                    placeholder="Type your question for the host..."
-                    value={qaQuestion}
-                    onChange={(e) => setQaQuestion(e.target.value)}
-                  />
-
-                  {qaMsg && (
-                    <div className={`text-xs mb-3 font-medium ${qaMsg.includes("sent") ? "text-emerald-600" : "text-red-500"}`}>
-                      {qaMsg}
-                    </div>
-                  )}
-
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      type="button"
-                      className="btn-secondary text-xs py-2 px-3"
-                      onClick={() => setShowQaModal(false)}
-                    >
-                      Close
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-primary text-xs py-2 px-4 shadow-xs"
-                      onClick={submitLiveQuestion}
-                      disabled={qaSending || !qaQuestion.trim()}
-                    >
-                      {qaSending ? "Sending..." : "Submit Question"}
-                    </button>
-                  </div>
-
-                  {/* Real-Time Questions and Host Replies List */}
-                  {parseQaFeed(activity?.qaFeed).length > 0 && (
-                    <div className="mt-5 pt-4 border-t border-[#E1E1DC] dark:border-[#2A2E52]">
-                      <div className="text-xs font-bold text-gray-800 dark:text-gray-200 mb-2.5 flex items-center justify-between">
-                        <span>Questions & Host Replies ({parseQaFeed(activity?.qaFeed).length})</span>
-                        <span className="text-[10px] text-gray-400 font-mono">Live Sync</span>
-                      </div>
-                      <div className="max-h-56 overflow-y-auto space-y-2.5 pr-1">
-                        {parseQaFeed(activity?.qaFeed).map((q) => {
-                          const isMyQ = q.participantId === guestId;
-                          const ans = q.answer || q.answerText || "";
-                          const prompt = q.text || q.questionText || "";
-                          const name = q.participantName || q.displayName || "Participant";
-                          const answered = Boolean(q.isAnswered || ans);
-
-                          return (
-                            <div
-                              key={q.id}
-                              className={`p-3 rounded-xl border text-xs transition-all ${
-                                answered
-                                  ? "bg-emerald-500/[0.04] border-emerald-500/30"
-                                  : "bg-[#FAFAF9] dark:bg-[#1B1E3F]/40 border-gray-200 dark:border-[#2A2E52]"
-                              }`}
-                            >
-                              <div className="flex items-center justify-between gap-1 mb-1">
-                                <span className="font-semibold text-xs text-gray-900 dark:text-gray-100">
-                                  {name} {isMyQ && <span className="text-primary font-bold">(You)</span>}
-                                </span>
-                                {answered ? (
-                                  <span className="text-[10px] text-emerald-600 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
-                                    ✓ Answered
-                                  </span>
-                                ) : (
-                                  <span className="text-[10px] text-amber-600 font-medium bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
-                                    Pending Host
-                                  </span>
-                                )}
-                              </div>
-                              <div className="text-gray-700 dark:text-gray-200 mb-1.5">"{prompt}"</div>
-                              {answered && (
-                                <div className="mt-1.5 p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-900 dark:text-emerald-300">
-                                  <span className="font-bold mr-1">Host Response:</span>
-                                  {ans || "Question marked as answered by host."}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-        )}
+        {floatingQaButton}
+        {qaModalElement}
       </div>
     </main>
   );

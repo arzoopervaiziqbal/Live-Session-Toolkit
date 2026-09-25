@@ -231,13 +231,32 @@ async function postParticipantQuestion(req, res) {
     } catch (_) {}
   }
 
-  activity.qaFeed = [...currentFeed, newQ];
+  const updatedFeed = [...currentFeed, newQ];
+  activity.qaFeed = updatedFeed;
   activity.changed("qaFeed", true);
   await activity.save();
 
-  emitToSession(activity.linkId, "qa-new-question", { item: newQ, qaFeed: activity.qaFeed });
+  try {
+    await Activity.update({ qaFeed: updatedFeed }, { where: { _id: activity._id } });
+  } catch (dbErr) {
+    console.warn("[join.controller] Activity.update fallback:", dbErr.message);
+  }
 
-  res.status(201).json({ success: true, item: newQ, qaFeed: activity.qaFeed });
+  // Broadcast to all session aliases so host and participants receive it immediately
+  const aliasRooms = new Set([
+    String(activity.linkId || "").toLowerCase().trim(),
+    String(activity._id || "").toLowerCase().trim(),
+    String(activity.sessionId || "").toLowerCase().trim(),
+    String(req.params.linkId || "").toLowerCase().trim(),
+  ]);
+
+  aliasRooms.forEach((r) => {
+    if (r) {
+      emitToSession(r, "qa-new-question", { item: newQ, qaFeed: updatedFeed });
+    }
+  });
+
+  res.status(201).json({ success: true, item: newQ, qaFeed: updatedFeed });
 }
 
 module.exports = { getActivityByCode, submitResponses, postParticipantQuestion };

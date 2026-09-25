@@ -70,10 +70,14 @@ function initSocket(server, clientUrl) {
     });
 
     // Participant asks question
-    socket.on("qa-new-question", ({ linkId, item, qaFeed }) => {
-      const lid = String(linkId || currentLinkId).toLowerCase().trim();
-      if (!lid) return;
-      io.to(`session-${lid}`).emit("qa-new-question", { item, qaFeed });
+    socket.on("qa-new-question", ({ linkId, item, qaFeed, activityId }) => {
+      const targets = new Set([
+        String(linkId || currentLinkId || "").toLowerCase().trim(),
+        String(activityId || "").toLowerCase().trim(),
+      ]);
+      targets.forEach((lid) => {
+        if (lid) io.to(`session-${lid}`).emit("qa-new-question", { item, qaFeed });
+      });
     });
 
     // Host answers / updates Q&A

@@ -39,6 +39,40 @@ export default function LivePage() {
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [viewerCount, setViewerCount] = useState(0);
   const [screenPreviewExpanded, setScreenPreviewExpanded] = useState(false);
+  const [hostQaToast, setHostQaToast] = useState(null);
+  const hostToastTimerRef = useRef(null);
+
+  function playHostChime() {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        const ctx = new AudioCtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(523.25, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(783.99, ctx.currentTime + 0.12);
+        gain.gain.setValueAtTime(0.18, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.35);
+      }
+    } catch (_) {}
+  }
+
+  function showHostQaToast(item) {
+    if (hostToastTimerRef.current) clearTimeout(hostToastTimerRef.current);
+    setHostQaToast({
+      id: item?.id || Date.now(),
+      sender: item?.participantName || item?.displayName || "Participant",
+      text: item?.text || item?.questionText || "Question submitted",
+    });
+    hostToastTimerRef.current = setTimeout(() => {
+      setHostQaToast(null);
+    }, 7000);
+  }
 
   // WebRTC & Media Stream Refs
   const localStreamRef = useRef(null);
@@ -70,14 +104,18 @@ export default function LivePage() {
 
   // Real-time Socket.IO Connection & WebRTC Signaling
   useEffect(() => {
-    if (!results?.activity?.linkId) return;
     const socket = getSocket();
-    const linkId = results.activity.linkId;
+    const linkId = results?.activity?.linkId;
+    const actId = results?.activity?._id || activityId;
+    const sessId = results?.activity?.sessionId;
 
     function joinRoom() {
-      socket.emit("join-session", {
-        linkId,
-        role: "host",
+      const roomIds = new Set([linkId, actId, sessId].filter(Boolean));
+      roomIds.forEach((rid) => {
+        socket.emit("join-session", {
+          linkId: rid,
+          role: "host",
+        });
       });
     }
 
@@ -94,13 +132,18 @@ export default function LivePage() {
         if (!prev) return prev;
         const currentFeed = parseQaFeed(prev.activity?.qaFeed);
         const incomingFeed = qaFeed ? parseQaFeed(qaFeed) : null;
-        const exists = currentFeed.some((q) => q.id === item?.id);
+        const exists = item?.id ? currentFeed.some((q) => q.id === item.id) : false;
         const updatedFeed = incomingFeed || (exists ? currentFeed : [...currentFeed, item]);
         return {
           ...prev,
           activity: { ...prev.activity, qaFeed: updatedFeed },
         };
       });
+
+      playHostChime();
+      if (item) {
+        showHostQaToast(item);
+      }
     });
 
     // Real-time Q&A status update
@@ -201,7 +244,7 @@ export default function LivePage() {
       socket.off("screen-share-answer");
       socket.off("screen-share-ice");
     };
-  }, [results?.activity?.linkId]);
+  }, [results?.activity?.linkId, results?.activity?._id, activityId]);
 
   // Cleanup media streams on unmount
   useEffect(() => {
@@ -487,7 +530,48 @@ export default function LivePage() {
   });
 
   return (
-    <main className="min-h-screen pb-16 bg-[#FAFAF9] dark:bg-[#080915]">
+    <main className="min-h-screen pb-16 bg-[#FAFAF9] dark:bg-[#080915] relative">
+      {hostQaToast && (
+        <div
+          role="alert"
+          className="fixed top-6 right-6 z-50 max-w-sm w-full bg-[#0B1528]/95 dark:bg-[#070D1B]/95 border-2 border-emerald-500/60 text-white shadow-2xl rounded-2xl p-4 backdrop-blur-md animate-in slide-in-from-top-4 flex items-start gap-3"
+        >
+          <div className="w-10 h-10 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center shrink-0 text-lg shadow-sm">
+            💬
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between gap-1 mb-1">
+              <span className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider">
+                New Student Question
+              </span>
+              <button
+                type="button"
+                onClick={() => setHostQaToast(null)}
+                className="text-gray-400 hover:text-white text-xs font-bold px-1"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="text-xs font-bold text-gray-100 truncate mb-0.5">
+              {hostQaToast.sender} asked:
+            </div>
+            <div className="text-xs text-gray-300 line-clamp-2 italic mb-2">
+              "{hostQaToast.text}"
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setHostQaToast(null);
+                const el = document.getElementById("qa-section-panel");
+                if (el) el.scrollIntoView({ behavior: "smooth" });
+              }}
+              className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 underline"
+            >
+              View in Q&A Feed ↓
+            </button>
+          </div>
+        </div>
+      )}
       <Navbar userName={user?.name} onLogout={logout} logoutLabel={t.logout_btn} />
 
       <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
@@ -923,7 +1007,7 @@ export default function LivePage() {
         </div>
 
         {/* Live Q&A Moderation Section (Host has full control anytime) */}
-        <div className="card p-6 mt-6 bg-white dark:bg-[#12142B] border border-[#E1E1DC] dark:border-[#2A2E52] shadow-sm">
+        <div id="qa-section-panel" className="card p-6 mt-6 bg-white dark:bg-[#12142B] border border-[#E1E1DC] dark:border-[#2A2E52] shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-4 border-b border-[#E1E1DC] dark:border-[#2A2E52]">
             <div>
               <div className="flex items-center gap-2">

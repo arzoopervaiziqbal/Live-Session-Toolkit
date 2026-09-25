@@ -96,11 +96,20 @@ export default function ResultPage() {
     const socket = getSocket();
     const linkId = String(result.linkId).toLowerCase().trim();
 
-    socket.emit("join-session", {
-      linkId,
-      role: "participant",
-      participantId: result.participantId || guestId,
-      displayName: result.participantName || guestName || "Student",
+    const aliasRooms = new Set([
+      String(result.linkId || "").toLowerCase().trim(),
+      String(result._id || "").toLowerCase().trim(),
+      String(result.activityId || "").toLowerCase().trim(),
+    ]);
+    aliasRooms.forEach((r) => {
+      if (r) {
+        socket.emit("join-session", {
+          linkId: r,
+          role: "participant",
+          participantId: result.participantId || guestId,
+          displayName: result.participantName || guestName || "Student",
+        });
+      }
     });
 
     // Real-time Q&A toggle from host
@@ -310,6 +319,17 @@ export default function ResultPage() {
         displayName,
         questionText: questionText.trim(),
       });
+
+      try {
+        const socket = getSocket();
+        socket.emit("qa-new-question", {
+          linkId,
+          activityId: result?._id || result?.activityId,
+          item: res?.item,
+          qaFeed: res?.qaFeed,
+        });
+      } catch (_) {}
+
       setQaSuccess("Your question has been sent to the host!");
       setMyQuestions((prev) => [
         ...prev,
