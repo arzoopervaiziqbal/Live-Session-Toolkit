@@ -598,20 +598,24 @@ export default function AttemptPage() {
                 <div className="space-y-3">
                   {qaList.map((q) => {
                     const isMyQuestion = q.participantId === guestId;
+                    const questionAnswer = q.answer || q.answerText || "";
+                    const questionPrompt = q.text || q.questionText || "";
+                    const studentName = q.participantName || q.displayName || "Participant";
+                    const isAnswered = Boolean(q.isAnswered || questionAnswer);
 
                     return (
                       <div
                         key={q.id}
                         className={`p-3.5 rounded-xl border transition-all ${
-                          q.isAnswered
-                            ? "bg-emerald-500/5 border-emerald-500/30"
+                          isAnswered
+                            ? "bg-emerald-500/[0.04] border-emerald-500/30 dark:bg-emerald-950/10"
                             : "bg-[#FAFAF9] dark:bg-[#161836] border-[#E1E1DC] dark:border-[#2A2E52]"
                         }`}
                       >
                         <div className="flex items-center justify-between gap-2 mb-1.5">
                           <div className="flex items-center gap-2">
                             <span className="font-semibold text-xs text-gray-900 dark:text-gray-100">
-                              {q.displayName || "Participant"}
+                              {studentName}
                             </span>
                             {isMyQuestion && (
                               <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-bold">
@@ -619,7 +623,7 @@ export default function AttemptPage() {
                               </span>
                             )}
                           </div>
-                          {q.isAnswered ? (
+                          {isAnswered ? (
                             <span className="text-[10px] font-bold text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 flex items-center gap-1">
                               <span>✓</span> Answered
                             </span>
@@ -631,15 +635,18 @@ export default function AttemptPage() {
                         </div>
 
                         <p className="text-xs text-gray-700 dark:text-gray-200 mb-2">
-                          {q.questionText}
+                          "{questionPrompt}"
                         </p>
 
-                        {q.isAnswered && q.answerText && (
-                          <div className="mt-2 pt-2 border-t border-emerald-500/20 pl-2 border-l-2 border-l-emerald-500 text-xs">
-                            <span className="font-bold text-emerald-600 dark:text-emerald-400 mr-1">
-                              Host's Answer:
-                            </span>
-                            <span className="text-gray-800 dark:text-gray-200">{q.answerText}</span>
+                        {isAnswered && (
+                          <div className="mt-2.5 pt-2.5 border-t border-emerald-500/20 pl-3 border-l-2 border-l-emerald-500 bg-emerald-500/5 dark:bg-emerald-950/20 p-2.5 rounded-r-lg text-xs">
+                            <div className="flex items-center gap-1.5 font-bold text-emerald-600 dark:text-emerald-400 mb-1">
+                              <span>💬</span>
+                              <span>Host's Reply:</span>
+                            </div>
+                            <div className="text-gray-900 dark:text-gray-100 font-medium">
+                              {questionAnswer || "Question marked as answered by host."}
+                            </div>
                           </div>
                         )}
                       </div>
@@ -962,19 +969,19 @@ export default function AttemptPage() {
 
         {/* Q&A Modal */}
         {showQaModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
-            <div className="card w-full max-w-md p-6 bg-white dark:bg-[#12142B] border border-[#E1E1DC] dark:border-[#2A2E52] shadow-2xl rounded-2xl relative">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+            <div className="card w-full max-w-lg p-6 bg-white dark:bg-[#12142B] border border-[#E1E1DC] dark:border-[#2A2E52] shadow-2xl rounded-2xl relative max-h-[85vh] overflow-y-auto">
               <div className="flex items-center justify-between pb-3 mb-4 border-b border-[#E1E1DC] dark:border-[#2A2E52]">
                 <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
                   <h3 className="font-display font-bold text-sm text-gray-900 dark:text-gray-100">
-                    Ask Host a Question
+                    Live Session Q&A
                   </h3>
                 </div>
                 <button
                   type="button"
                   onClick={() => setShowQaModal(false)}
-                  className="text-gray-400 hover:text-gray-600 text-sm font-bold"
+                  className="text-gray-400 hover:text-gray-600 text-sm font-bold p-1"
                 >
                   ✕
                 </button>
@@ -998,12 +1005,12 @@ export default function AttemptPage() {
               ) : (
                 <>
                   <p className="text-xs text-gray-500 mb-3">
-                    Have a doubt or question during this session? The host will see it live on their screen.
+                    Have a doubt or question during this session? The host sees questions in real time and replies below.
                   </p>
 
                   <textarea
-                    rows={4}
-                    className="field text-xs sm:text-sm mb-3"
+                    rows={3}
+                    className="field text-xs sm:text-sm mb-2"
                     placeholder="Type your question for the host..."
                     value={qaQuestion}
                     onChange={(e) => setQaQuestion(e.target.value)}
@@ -1021,7 +1028,7 @@ export default function AttemptPage() {
                       className="btn-secondary text-xs py-2 px-3"
                       onClick={() => setShowQaModal(false)}
                     >
-                      Cancel
+                      Close
                     </button>
                     <button
                       type="button"
@@ -1032,6 +1039,58 @@ export default function AttemptPage() {
                       {qaSending ? "Sending..." : "Submit Question"}
                     </button>
                   </div>
+
+                  {/* Real-Time Questions and Host Replies List */}
+                  {parseQaFeed(activity?.qaFeed).length > 0 && (
+                    <div className="mt-5 pt-4 border-t border-[#E1E1DC] dark:border-[#2A2E52]">
+                      <div className="text-xs font-bold text-gray-800 dark:text-gray-200 mb-2.5 flex items-center justify-between">
+                        <span>Questions & Host Replies ({parseQaFeed(activity?.qaFeed).length})</span>
+                        <span className="text-[10px] text-gray-400 font-mono">Live Sync</span>
+                      </div>
+                      <div className="max-h-56 overflow-y-auto space-y-2.5 pr-1">
+                        {parseQaFeed(activity?.qaFeed).map((q) => {
+                          const isMyQ = q.participantId === guestId;
+                          const ans = q.answer || q.answerText || "";
+                          const prompt = q.text || q.questionText || "";
+                          const name = q.participantName || q.displayName || "Participant";
+                          const answered = Boolean(q.isAnswered || ans);
+
+                          return (
+                            <div
+                              key={q.id}
+                              className={`p-3 rounded-xl border text-xs transition-all ${
+                                answered
+                                  ? "bg-emerald-500/[0.04] border-emerald-500/30"
+                                  : "bg-[#FAFAF9] dark:bg-[#1B1E3F]/40 border-gray-200 dark:border-[#2A2E52]"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-1 mb-1">
+                                <span className="font-semibold text-xs text-gray-900 dark:text-gray-100">
+                                  {name} {isMyQ && <span className="text-primary font-bold">(You)</span>}
+                                </span>
+                                {answered ? (
+                                  <span className="text-[10px] text-emerald-600 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                                    ✓ Answered
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] text-amber-600 font-medium bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                                    Pending Host
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-gray-700 dark:text-gray-200 mb-1.5">"{prompt}"</div>
+                              {answered && (
+                                <div className="mt-1.5 p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-900 dark:text-emerald-300">
+                                  <span className="font-bold mr-1">Host Response:</span>
+                                  {ans || "Question marked as answered by host."}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </div>

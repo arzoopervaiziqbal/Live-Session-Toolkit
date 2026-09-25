@@ -98,8 +98,21 @@ async function getActivityByCode(req, res) {
     });
   }
 
+  const actJson = activity.toJSON ? activity.toJSON() : { ...activity };
+  let parsedQaFeed = [];
+  if (Array.isArray(actJson.qaFeed)) {
+    parsedQaFeed = actJson.qaFeed;
+  } else if (typeof actJson.qaFeed === "string") {
+    try {
+      const p = JSON.parse(actJson.qaFeed);
+      if (Array.isArray(p)) parsedQaFeed = p;
+    } catch (_) {}
+  }
+  actJson.qaFeed = parsedQaFeed;
+  actJson.questions = safeQuestions;
+
   res.json({
-    activity: { ...activity.toJSON(), questions: safeQuestions },
+    activity: actJson,
     participantId: participant._id,
   });
 }
@@ -148,6 +161,16 @@ async function submitResponses(req, res) {
       await Response.bulkCreate(docs);
     }
 
+    let parsedFeed = [];
+    if (Array.isArray(activity.qaFeed)) {
+      parsedFeed = activity.qaFeed;
+    } else if (typeof activity.qaFeed === "string") {
+      try {
+        const p = JSON.parse(activity.qaFeed);
+        if (Array.isArray(p)) parsedFeed = p;
+      } catch (_) {}
+    }
+
     res.json({
       result: {
         activityTitle: activity.title,
@@ -160,6 +183,7 @@ async function submitResponses(req, res) {
         allowQa: Boolean(activity.allowQa),
         linkId: activity.linkId,
         participantId: participant._id,
+        qaFeed: parsedFeed,
       },
     });
   } catch (err) {
@@ -168,7 +192,7 @@ async function submitResponses(req, res) {
   }
 }
 
-// POST /api/join/:linkId/qa  body: { participantId, displayName, questionText }
+// POST /api/join/:linkId/qa  body: { participantId, displayName, questionText, text }
 async function postParticipantQuestion(req, res) {
   const activity = await findActivityByCode(req.params.linkId);
   if (!activity) return res.status(404).json({ error: "No live session with that code." });
@@ -177,18 +201,22 @@ async function postParticipantQuestion(req, res) {
     return res.status(400).json({ error: "Q&A is not allowed for this session." });
   }
 
-  const { participantId, displayName, questionText } = req.body;
-  const text = String(questionText || "").trim();
+  const { participantId, displayName, questionText, text: bodyText, message } = req.body;
+  const text = String(questionText || bodyText || message || "").trim();
   if (!text) {
     return res.status(400).json({ error: "Please enter your question." });
   }
 
+  const senderName = displayName || "Participant";
   const newQ = {
     id: `qa_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
     participantId: participantId || null,
-    participantName: displayName || "Participant",
+    participantName: senderName,
+    displayName: senderName,
     text,
+    questionText: text,
     answer: "",
+    answerText: "",
     isAnswered: false,
     createdAt: new Date().toISOString(),
   };

@@ -609,7 +609,7 @@ async function answerQa(req, res) {
   if (!activity) return res.status(404).json({ error: "Activity not found." });
 
   const { questionId } = req.params;
-  const { answer, isAnswered } = req.body;
+  const { answer, answerText, isAnswered } = req.body;
 
   let feed = [];
   if (Array.isArray(activity.qaFeed)) {
@@ -624,9 +624,18 @@ async function answerQa(req, res) {
   const itemIndex = feed.findIndex((q) => q.id === questionId);
   if (itemIndex === -1) return res.status(404).json({ error: "Q&A question not found." });
 
-  if (answer !== undefined) feed[itemIndex].answer = String(answer).trim();
-  if (isAnswered !== undefined) feed[itemIndex].isAnswered = Boolean(isAnswered);
-  if (answer && isAnswered === undefined) feed[itemIndex].isAnswered = true;
+  const incomingAns = answer !== undefined ? answer : answerText;
+  if (incomingAns !== undefined) {
+    const trimmed = String(incomingAns).trim();
+    feed[itemIndex].answer = trimmed;
+    feed[itemIndex].answerText = trimmed;
+  }
+  if (isAnswered !== undefined) {
+    feed[itemIndex].isAnswered = Boolean(isAnswered);
+  } else if (incomingAns) {
+    feed[itemIndex].isAnswered = true;
+  }
+  feed[itemIndex].answeredAt = new Date().toISOString();
 
   activity.qaFeed = feed;
   activity.changed("qaFeed", true);

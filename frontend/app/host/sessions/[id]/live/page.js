@@ -404,10 +404,17 @@ export default function LivePage() {
     try {
       const res = await api.answerQa(activityId, qId, { answer: text.trim(), isAnswered: true });
       if (res?.qaFeed) {
+        const feed = parseQaFeed(res.qaFeed);
         setResults((prev) => ({
           ...prev,
-          activity: { ...prev.activity, qaFeed: parseQaFeed(res.qaFeed) },
+          activity: { ...prev.activity, qaFeed: feed },
         }));
+        if (results?.activity?.linkId) {
+          getSocket().emit("qa-answered", {
+            linkId: results.activity.linkId,
+            qaFeed: feed,
+          });
+        }
       }
       setQaAnswerDrafts((prev) => ({ ...prev, [qId]: "" }));
     } catch (err) {
@@ -421,10 +428,17 @@ export default function LivePage() {
     try {
       const res = await api.answerQa(activityId, qId, { isAnswered: !currentStatus });
       if (res?.qaFeed) {
+        const feed = parseQaFeed(res.qaFeed);
         setResults((prev) => ({
           ...prev,
-          activity: { ...prev.activity, qaFeed: parseQaFeed(res.qaFeed) },
+          activity: { ...prev.activity, qaFeed: feed },
         }));
+        if (results?.activity?.linkId) {
+          getSocket().emit("qa-answered", {
+            linkId: results.activity.linkId,
+            qaFeed: feed,
+          });
+        }
       }
     } catch (err) {
       console.error("Failed to toggle answered:", err);
@@ -436,10 +450,17 @@ export default function LivePage() {
     try {
       const res = await api.deleteQa(activityId, qId);
       if (res?.qaFeed) {
+        const feed = parseQaFeed(res.qaFeed);
         setResults((prev) => ({
           ...prev,
-          activity: { ...prev.activity, qaFeed: parseQaFeed(res.qaFeed) },
+          activity: { ...prev.activity, qaFeed: feed },
         }));
+        if (results?.activity?.linkId) {
+          getSocket().emit("qa-answered", {
+            linkId: results.activity.linkId,
+            qaFeed: feed,
+          });
+        }
       }
     } catch (err) {
       console.error("Failed to delete question:", err);

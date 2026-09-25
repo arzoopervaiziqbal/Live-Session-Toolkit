@@ -77,9 +77,19 @@ export default function ResultPage() {
       if (Array.isArray(feed)) {
         setMyQuestions((prev) =>
           prev.map((myQ) => {
-            const match = feed.find((f) => f.id === myQ.id || f.text === myQ.text);
-            if (match && match.answer) {
-              return { ...myQ, answer: match.answer, isAnswered: true };
+            const match = feed.find(
+              (f) =>
+                f.id === myQ.id ||
+                (f.text && myQ.text && f.text === myQ.text) ||
+                (f.questionText && myQ.text && f.questionText === myQ.text)
+            );
+            if (match && (match.answer || match.answerText)) {
+              return {
+                ...myQ,
+                answer: match.answer || match.answerText,
+                answerText: match.answer || match.answerText,
+                isAnswered: true,
+              };
             }
             return myQ;
           })
@@ -416,14 +426,14 @@ export default function ResultPage() {
                       key={q.id}
                       className="p-3 rounded-lg bg-[#F8F8F5] dark:bg-[#1B1E3F]/40 border border-[#EBEBE6] dark:border-[#2A2E52] text-xs space-y-1.5"
                     >
-                      <div className="font-medium text-gray-800 dark:text-gray-200">"{q.text}"</div>
+                      <div className="font-medium text-gray-800 dark:text-gray-200">"{q.text || q.questionText}"</div>
                       <div className="text-[10px] text-gray-400">
                         Sent {new Date(q.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </div>
-                      {q.answer && (
-                        <div className="p-2 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-800 dark:text-emerald-300 text-xs">
-                          <span className="font-bold mr-1">Host Response:</span>
-                          {q.answer}
+                      {(q.answer || q.answerText) && (
+                        <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-800 dark:text-emerald-300 text-xs">
+                          <span className="font-bold mr-1">💬 Host Response:</span>
+                          {q.answer || q.answerText}
                         </div>
                       )}
                     </div>
