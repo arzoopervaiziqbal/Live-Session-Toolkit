@@ -49,6 +49,14 @@ const Activity = sequelize.define("Activity", {
     type: DataTypes.JSON,
     defaultValue: [],
   },
+  allowQa: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
+  },
+  qaFeed: {
+    type: DataTypes.JSON,
+    defaultValue: [],
+  },
 }, {
   tableName: "activities",
   timestamps: true,

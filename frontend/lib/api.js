@@ -101,10 +101,19 @@ export const api = {
   publishActivity: (activityId) => request(`/activities/${activityId}/publish`, { method: "POST", role: "host" }),
   getResults: (activityId) => request(`/activities/${activityId}/results`, { role: "host" }),
 
+  answerQa: (activityId, questionId, payload) =>
+    request(`/activities/${activityId}/qa/${questionId}`, { method: "PATCH", body: payload, role: "host" }),
+  deleteQa: (activityId, questionId) =>
+    request(`/activities/${activityId}/qa/${questionId}`, { method: "DELETE", role: "host" }),
+  toggleQa: (activityId, allowQa) =>
+    request(`/activities/${activityId}/toggle-qa`, { method: "PATCH", body: { allowQa }, role: "host" }),
+
   joinByCode: (linkId, guestId, name) =>
     request(`/join/${linkId}?guestId=${encodeURIComponent(guestId)}&name=${encodeURIComponent(name || "Guest")}`),
   submitAnswers: (linkId, guestId, answers) =>
     request(`/join/${linkId}/submit`, { method: "POST", body: { guestId, answers } }),
+  postParticipantQuestion: (linkId, payload) =>
+    request(`/join/${linkId}/qa`, { method: "POST", body: payload }),
 };
 
 export { API_URL };

@@ -17,5 +17,8 @@ router.post("/activities/:id/publish", ctrl.publish);
 router.post("/activities/:id/close", ctrl.closeActivity);
 router.get("/activities/:id/results", ctrl.getResults);
 router.get("/activities/:id/export", ctrl.exportCsv);
+router.patch("/activities/:id/qa/:questionId", ctrl.answerQa);
+router.delete("/activities/:id/qa/:questionId", ctrl.deleteQa);
+router.patch("/activities/:id/toggle-qa", ctrl.toggleQa);
 
 module.exports = router;

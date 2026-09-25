@@ -17,7 +17,7 @@ export default function ReviewPage() {
   const [activity, setActivity] = useState(null);
   const [loading, setLoading] = useState(true);
   const [sessionDraft, setSessionDraft] = useState({ title: "", description: "", date: "", status: "draft" });
-  const [activityDraft, setActivityDraft] = useState({ title: "", difficulty: "medium", expiresAt: "" });
+  const [activityDraft, setActivityDraft] = useState({ title: "", difficulty: "medium", expiresAt: "", allowQa: false });
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMessage, setSettingsMessage] = useState("");
 
@@ -53,6 +53,7 @@ export default function ReviewPage() {
           title: chosen.title || "",
           difficulty: chosen.difficulty || "medium",
           expiresAt: chosen.expiresAt ? new Date(chosen.expiresAt).toISOString().slice(0, 16) : "",
+          allowQa: Boolean(chosen.allowQa),
         });
         if (chosen.sourceNotesText) {
           setAddNotesPrompt(chosen.sourceNotesText);
@@ -169,6 +170,11 @@ export default function ReviewPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {activity.allowQa && (
+              <span className="text-xs bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 px-2.5 py-1 rounded-md font-semibold">
+                ✓ Q&A Allowed
+              </span>
+            )}
             {activity.linkId && (
               <span className="text-xs bg-primary/10 border border-primary/20 text-primary px-2.5 py-1 rounded-md font-mono font-bold">
                 Code: {activity.linkId}
@@ -210,7 +216,7 @@ export default function ReviewPage() {
               </select>
             </label>
             <label>
-              <span className="label">Quiz name</span>
+              <span className="label">Activity name</span>
               <input className="field" value={activityDraft.title} onChange={(e) => setActivityDraft({ ...activityDraft, title: e.target.value })} />
             </label>
             <label>
@@ -222,7 +228,18 @@ export default function ReviewPage() {
               </select>
             </label>
             <label className="sm:col-span-2">
-              <span className="label">Quiz closes</span>
+              <span className="label">Live Q&A Option</span>
+              <select
+                className="field"
+                value={activityDraft.allowQa ? "true" : "false"}
+                onChange={(e) => setActivityDraft({ ...activityDraft, allowQa: e.target.value === "true" })}
+              >
+                <option value="false">✕ Q&A Not Allowed (Quiz / Poll only)</option>
+                <option value="true">✓ Q&A Allowed (Participants can ask questions live)</option>
+              </select>
+            </label>
+            <label className="sm:col-span-2">
+              <span className="label">Activity closes</span>
               <input type="datetime-local" className="field" value={activityDraft.expiresAt} onChange={(e) => setActivityDraft({ ...activityDraft, expiresAt: e.target.value })} />
             </label>
           </div>
@@ -300,12 +317,12 @@ export default function ReviewPage() {
               </div>
             )}
 
-            {q.type === "mcq" && (
+            {(q.type === "mcq" || q.type === "poll") && (
               <div>
                 <label className="label">Correct answer</label>
                 <select
                   className="field text-xs"
-                  value={q.correctAnswer || ""}
+                  value={q.correctAnswer || (q.options && q.options[0]) || ""}
                   onChange={(e) => {
                     updateLocalQuestion(q.questionId, { correctAnswer: e.target.value });
                     setTimeout(() => saveQuestion(q.questionId), 0);

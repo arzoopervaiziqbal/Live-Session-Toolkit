@@ -28,7 +28,7 @@ async function listSessions(req, res) {
     sessions.map(async (s) => {
       const activities = await Activity.findAll({
         where: { sessionId: s._id },
-        attributes: ["_id", "linkId", "status", "questions"],
+        attributes: ["_id", "linkId", "status", "questions", "type"],
         order: [["createdAt", "DESC"]],
       });
       const firstActivity = activities[0];
@@ -49,6 +49,8 @@ async function listSessions(req, res) {
         linkId: firstActivity ? firstActivity.linkId : null,
         activityId: firstActivity ? firstActivity._id : null,
         activityStatus: firstActivity ? firstActivity.status : null,
+        activityType: firstActivity ? firstActivity.type : "quiz",
+        questionCount: Array.isArray(firstActivity?.questions) ? firstActivity.questions.length : 0,
         participantCount,
         completedCount,
       };

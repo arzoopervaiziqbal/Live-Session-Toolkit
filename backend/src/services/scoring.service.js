@@ -1,5 +1,6 @@
 // Helper to determine the correct answer for a question.
-// Supports direct correctAnswer and also options with "(Correct Answer)" or "[correct]".
+// Supports direct correctAnswer, options with "(Correct Answer)" or "[correct]",
+// and defaults to options[0] for poll/mcq if not explicitly specified.
 function getEffectiveCorrectAnswer(q) {
   if (
     q.correctAnswer !== undefined &&
@@ -8,16 +9,18 @@ function getEffectiveCorrectAnswer(q) {
   ) {
     return String(q.correctAnswer).trim();
   }
-  if (Array.isArray(q.options)) {
+  if (Array.isArray(q.options) && q.options.length > 0) {
     const match = q.options.find((opt) =>
       /\(correct answer\)|\(correct\)|\[correct\]/i.test(String(opt))
     );
     if (match) return String(match).trim();
+    // Default to the first option if no explicit correctAnswer was set
+    return String(q.options[0]).trim();
   }
   return null;
 }
 
-// Computes a quiz score by comparing submitted answers to each question's correctAnswer.
+// Computes a quiz or poll score by comparing submitted answers to each question's correctAnswer.
 // answersByQuestionId: { [questionId]: answerValue }
 function computeScore(questions, answersByQuestionId) {
   let correct = 0;
@@ -25,7 +28,7 @@ function computeScore(questions, answersByQuestionId) {
 
   const details = (questions || []).map((q) => {
     const effCorrect = getEffectiveCorrectAnswer(q);
-    const isScorable = effCorrect !== null || q.type === "mcq";
+    const isScorable = effCorrect !== null || q.type === "mcq" || q.type === "poll";
 
     if (!isScorable) {
       return { questionId: q.questionId, type: q.type, isCorrect: null };

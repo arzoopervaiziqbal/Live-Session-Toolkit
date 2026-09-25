@@ -4,7 +4,7 @@ const CATEGORY_SHAPES = {
   quiz: (count) =>
     `Generate ${count} multiple choice quiz questions. Each item: {"questionText": string, "type": "mcq", "options": [4 strings], "correctAnswer": string (must exactly match one option)}.`,
   poll: (count) =>
-    `Generate ${count} poll questions for audience opinion or comprehension checks. Each item: {"questionText": string, "type": "poll", "options": [3 to 4 strings]}.`,
+    `Generate ${count} poll questions for audience opinion or comprehension checks. Each item: {"questionText": string, "type": "poll", "options": [4 strings], "correctAnswer": string (must exactly match one option)}.`,
   feedback: (count) => {
     const half = Math.max(1, Math.round(count / 2));
     return `Generate ${count} feedback questions: ${half} of type "rating" (1-5 scale, no options array needed) and ${count - half} of type "open_text". Each item: {"questionText": string, "type": "rating" | "open_text"}.`;
@@ -49,7 +49,12 @@ ${notesText.slice(0, 8000)}
 }
 
 function parseItems(rawText) {
-  const cleaned = rawText.replace(/```json|```/g, "").trim();
+  let cleaned = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
+  const startIdx = cleaned.indexOf("[");
+  const endIdx = cleaned.lastIndexOf("]");
+  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+    cleaned = cleaned.slice(startIdx, endIdx + 1);
+  }
   try {
     return JSON.parse(cleaned);
   } catch (e) {
@@ -63,7 +68,9 @@ function shapeItems(items, category) {
     type: item.type || (category === "quiz" ? "mcq" : category === "poll" ? "poll" : "open_text"),
     questionText: item.questionText || "",
     options: item.options || [],
-    correctAnswer: item.correctAnswer || null,
+    correctAnswer:
+      item.correctAnswer ||
+      (Array.isArray(item.options) && item.options.length > 0 ? item.options[0] : null),
     orderIndex: index,
     aiGenerated: true,
   }));
@@ -107,9 +114,14 @@ async function callGroq(prompt) {
 async function callGemini(prompt) {
   const candidateModels = [
     env.geminiModel,
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-3.6-flash",
     "gemini-3.5-flash",
     "gemini-flash-latest",
     "gemini-3.7-flash",
+    "gemini-3.8-flash",
   ].filter((m, i, arr) => m && arr.indexOf(m) === i);
 
   let lastError = null;
@@ -199,7 +211,19 @@ async function generateQuestions({ category, difficulty, notesText, language, qu
 
   let rawText;
   if (geminiKey) {
-    rawText = await callGemini(prompt);
+    try {
+      rawText = await callGemini(prompt);
+    } catch (err) {
+      if (groqKey) {
+        console.warn("[AI] Gemini failed, falling back to Groq:", err.message);
+        rawText = await callGroq(prompt);
+      } else if (anthropicKey) {
+        console.warn("[AI] Gemini failed, falling back to Anthropic:", err.message);
+        rawText = await callAnthropic(prompt);
+      } else {
+        throw err;
+      }
+    }
   } else if (groqKey) {
     rawText = await callGroq(prompt);
   } else {

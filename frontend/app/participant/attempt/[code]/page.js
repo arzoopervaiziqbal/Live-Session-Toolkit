@@ -4,8 +4,21 @@ import { useParams, useRouter } from "next/navigation";
 import Navbar from "../../../../components/Navbar";
 import { useLang } from "../../../../contexts/LangContext";
 import { api } from "../../../../lib/api";
+import { getSocket, RTC_CONFIG } from "../../../../lib/socket";
 
 const QUESTION_TIME_LIMIT = 60; // 60 seconds per question
+
+function parseQaFeed(feed) {
+  if (!feed) return [];
+  if (Array.isArray(feed)) return feed;
+  if (typeof feed === "string") {
+    try {
+      const parsed = JSON.parse(feed);
+      if (Array.isArray(parsed)) return parsed;
+    } catch (_) {}
+  }
+  return [];
+}
 
 export default function AttemptPage() {
   const { t } = useLang();
@@ -21,6 +34,21 @@ export default function AttemptPage() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [timedOutNotice, setTimedOutNotice] = useState(false);
+  const [showQaModal, setShowQaModal] = useState(false);
+  const [qaQuestion, setQaQuestion] = useState("");
+  const [qaSending, setQaSending] = useState(false);
+  const [qaMsg, setQaMsg] = useState("");
+
+  // Screen Sharing State for Participant
+  const [hostSharingScreen, setHostSharingScreen] = useState(false);
+  const [screenExpanded, setScreenExpanded] = useState(true);
+  const [screenFrameSrc, setScreenFrameSrc] = useState(null);
+  const [remoteMediaStream, setRemoteMediaStream] = useState(null);
+
+  const remoteVideoRef = useRef(null);
+  const remoteStreamRef = useRef(null);
+  const peerConnectionRef = useRef(null);
+  const pendingCandidatesRef = useRef([]);
 
   // Keep refs up-to-date for interval callback
   const answersRef = useRef(answers);
@@ -50,15 +78,213 @@ export default function AttemptPage() {
       .catch(() => router.replace("/participant/join"));
   }, [params.code, router]);
 
+  // Real-time Socket.IO Connection: Q&A Toggle and Screen Sharing
+  useEffect(() => {
+    if (!params.code) return;
+    const socket = getSocket();
+    const linkId = String(params.code).toLowerCase().trim();
+
+    function sendJoin() {
+      socket.emit("join-session", {
+        linkId,
+        role: "participant",
+        participantId: guestId,
+        displayName: guestName,
+      });
+      // Request active screen share or buffered snapshot immediately
+      socket.emit("request-screen-sync", { linkId });
+    }
+
+    sendJoin();
+    socket.on("connect", sendJoin);
+
+    // Real-time Q&A toggle from host
+    socket.on("qa-updated", ({ allowQa }) => {
+      setActivity((prev) => (prev ? { ...prev, allowQa: Boolean(allowQa) } : prev));
+    });
+
+    // Real-time Q&A updates
+    socket.on("qa-new-question", ({ item, qaFeed }) => {
+      setActivity((prev) => {
+        if (!prev) return prev;
+        const currentFeed = parseQaFeed(prev.qaFeed);
+        const incoming = qaFeed ? parseQaFeed(qaFeed) : null;
+        const exists = currentFeed.some((q) => q.id === item?.id);
+        const updated = incoming || (exists ? currentFeed : [...currentFeed, item]);
+        return { ...prev, qaFeed: updated };
+      });
+    });
+
+    socket.on("qa-answered", ({ qaFeed }) => {
+      setActivity((prev) => (prev ? { ...prev, qaFeed: parseQaFeed(qaFeed) } : prev));
+    });
+
+    socket.on("qa-deleted", ({ qaFeed }) => {
+      setActivity((prev) => (prev ? { ...prev, qaFeed: parseQaFeed(qaFeed) } : prev));
+    });
+
+    // Screen sharing started by host
+    socket.on("screen-share-started", async ({ hostSocketId }) => {
+      setHostSharingScreen(true);
+      setScreenExpanded(true);
+
+      if (peerConnectionRef.current) {
+        peerConnectionRef.current.close();
+      }
+
+      const pc = new RTCPeerConnection(RTC_CONFIG);
+      peerConnectionRef.current = pc;
+      pendingCandidatesRef.current = [];
+
+      pc.ontrack = (event) => {
+        if (event.streams && event.streams[0]) {
+          remoteStreamRef.current = event.streams[0];
+          setRemoteMediaStream(event.streams[0]);
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = event.streams[0];
+            remoteVideoRef.current.play().catch(() => {});
+          }
+        }
+      };
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.emit("screen-share-ice", {
+            targetSocketId: hostSocketId,
+            candidate: event.candidate,
+          });
+        }
+      };
+
+      // Request host to send WebRTC offer
+      socket.emit("screen-share-request", {
+        hostSocketId,
+        participantName: guestName || "Student",
+      });
+    });
+
+    // Host sends WebRTC offer
+    socket.on("screen-share-offer", async ({ hostSocketId, offer }) => {
+      try {
+        let pc = peerConnectionRef.current;
+        if (!pc) {
+          pc = new RTCPeerConnection(RTC_CONFIG);
+          peerConnectionRef.current = pc;
+          pc.ontrack = (event) => {
+            if (event.streams && event.streams[0]) {
+              remoteStreamRef.current = event.streams[0];
+              setRemoteMediaStream(event.streams[0]);
+              if (remoteVideoRef.current) {
+                remoteVideoRef.current.srcObject = event.streams[0];
+                remoteVideoRef.current.play().catch(() => {});
+              }
+            }
+          };
+          pc.onicecandidate = (event) => {
+            if (event.candidate) {
+              socket.emit("screen-share-ice", {
+                targetSocketId: hostSocketId,
+                candidate: event.candidate,
+              });
+            }
+          };
+        }
+
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+
+        // Flush any queued ICE candidates
+        while (pendingCandidatesRef.current.length > 0) {
+          const cand = pendingCandidatesRef.current.shift();
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(cand));
+          } catch (e) {}
+        }
+
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
+        socket.emit("screen-share-answer", {
+          hostSocketId,
+          answer,
+        });
+      } catch (err) {
+        console.warn("Error answering WebRTC offer:", err);
+      }
+    });
+
+    // WebRTC ICE candidates from host
+    socket.on("screen-share-ice", async ({ candidate }) => {
+      const pc = peerConnectionRef.current;
+      if (pc && candidate) {
+        try {
+          if (pc.remoteDescription && pc.remoteDescription.type) {
+            await pc.addIceCandidate(new RTCIceCandidate(candidate));
+          } else {
+            pendingCandidatesRef.current.push(candidate);
+          }
+        } catch (e) {
+          console.warn("Error adding ICE candidate:", e);
+        }
+      }
+    });
+
+    // Screen frame snapshot fallback
+    socket.on("screen-frame", ({ frame }) => {
+      setHostSharingScreen(true);
+      setScreenFrameSrc(frame);
+    });
+
+    // Screen share stopped by host
+    socket.on("screen-share-stopped", () => {
+      setHostSharingScreen(false);
+      setScreenFrameSrc(null);
+      setRemoteMediaStream(null);
+      remoteStreamRef.current = null;
+      pendingCandidatesRef.current = [];
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = null;
+      }
+      if (peerConnectionRef.current) {
+        peerConnectionRef.current.close();
+        peerConnectionRef.current = null;
+      }
+    });
+
+    return () => {
+      socket.off("connect", sendJoin);
+      socket.off("qa-updated");
+      socket.off("qa-new-question");
+      socket.off("qa-answered");
+      socket.off("qa-deleted");
+      socket.off("screen-share-started");
+      socket.off("screen-share-offer");
+      socket.off("screen-share-ice");
+      socket.off("screen-frame");
+      socket.off("screen-share-stopped");
+      if (peerConnectionRef.current) {
+        peerConnectionRef.current.close();
+        peerConnectionRef.current = null;
+      }
+    };
+  }, [params.code, guestId, guestName]);
+
+  // Ensure remote stream is bound whenever video mounts or expands
+  useEffect(() => {
+    if (remoteVideoRef.current && remoteMediaStream) {
+      remoteVideoRef.current.srcObject = remoteMediaStream;
+      remoteVideoRef.current.play().catch(() => {});
+    }
+  }, [remoteMediaStream, hostSharingScreen, screenExpanded]);
+
   // Reset timer when question index changes
   useEffect(() => {
     setTimeLeft(QUESTION_TIME_LIMIT);
     setTimedOutNotice(false);
   }, [currentIndex]);
 
-  // 60-second Countdown Timer per question
+  // 60-second Countdown Timer per question (ONLY when has questions!)
   useEffect(() => {
-    if (!activity || submitting) return;
+    if (!activity || !activity.questions || activity.questions.length === 0 || submitting) return;
 
     const interval = setInterval(() => {
       setTimeLeft((prev) => {
@@ -127,12 +353,302 @@ export default function AttemptPage() {
     }
   }
 
-  if (!activity || !activity.questions || activity.questions.length === 0) {
+  async function submitLiveQuestion() {
+    if (!qaQuestion.trim()) return;
+    setQaSending(true);
+    setQaMsg("");
+    try {
+      await api.postParticipantQuestion(params.code, {
+        participantId: guestId,
+        displayName: guestName || "Participant",
+        questionText: qaQuestion.trim(),
+      });
+      setQaMsg("Question sent to host!");
+      setQaQuestion("");
+      setTimeout(() => {
+        setQaMsg("");
+        setShowQaModal(false);
+      }, 1500);
+    } catch (err) {
+      setQaMsg(err.message || "Failed to send question.");
+    } finally {
+      setQaSending(false);
+    }
+  }
+
+  const hasQuestions = Array.isArray(activity?.questions) && activity.questions.length > 0;
+
+  if (!activity) {
     return (
       <main className="min-h-screen">
         <Navbar userName={guestName || undefined} logoutLabel={undefined} />
         <div className="max-w-lg mx-auto px-6 py-16 text-center text-sm text-gray-400">
-          Loading quiz questions…
+          Connecting to live session…
+        </div>
+      </main>
+    );
+  }
+
+  // IF NO QUESTIONS: RENDER DEDICATED LIVE ROOM (Screen Share + Live Q&A)
+  if (!hasQuestions) {
+    const qaList = parseQaFeed(activity.qaFeed);
+
+    return (
+      <main className="min-h-screen pb-16 bg-[#FAFAF9] dark:bg-[#080915]">
+        <Navbar userName={guestName || undefined} logoutLabel={undefined} />
+
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
+          {/* Live Session Header */}
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
+                </span>
+                <span className="text-xs font-bold text-rose-500 uppercase tracking-wider">
+                  Live Session Active
+                </span>
+                <span className="text-[11px] font-mono text-gray-400 bg-[#E1E1DC] dark:bg-[#1B1E3F] px-2 py-0.5 rounded">
+                  Code: {params.code}
+                </span>
+              </div>
+              <h1 className="font-display text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100">
+                {activity.title}
+              </h1>
+            </div>
+
+            <div className="flex items-center gap-2 text-xs">
+              <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-semibold flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                Joined as {guestName || "Guest"}
+              </span>
+            </div>
+          </div>
+
+          {/* Real-Time Screen Share Viewer */}
+          <div className="card mb-6 p-4 border-2 border-primary/40 bg-[#0A0D1E] text-white shadow-xl rounded-2xl overflow-hidden">
+            <div className="flex items-center justify-between gap-2 pb-2.5 mb-2.5 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                {hostSharingScreen ? (
+                  <>
+                    <span className="relative flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
+                    </span>
+                    <span className="text-xs font-bold text-gray-200 uppercase tracking-wider">
+                      Host's Screen Broadcast
+                    </span>
+                    <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                      HD Real-Time
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
+                    <span className="text-xs font-semibold text-gray-300">
+                      Live Screen Broadcast Standby
+                    </span>
+                  </>
+                )}
+              </div>
+              {hostSharingScreen && (
+                <button
+                  type="button"
+                  onClick={() => setScreenExpanded((prev) => !prev)}
+                  className="text-[11px] bg-white/10 hover:bg-white/20 text-gray-200 px-2.5 py-1 rounded-md transition-colors font-medium"
+                >
+                  {screenExpanded ? "Minimize" : "Expand"}
+                </button>
+              )}
+            </div>
+
+            {hostSharingScreen ? (
+              screenExpanded ? (
+                <div className="relative aspect-video w-full bg-black rounded-xl overflow-hidden flex items-center justify-center border border-white/10">
+                  <video
+                    ref={(el) => {
+                      remoteVideoRef.current = el;
+                      if (el && remoteStreamRef.current) {
+                        el.srcObject = remoteStreamRef.current;
+                        el.play().catch(() => {});
+                      }
+                    }}
+                    autoPlay
+                    playsInline
+                    muted
+                    className={`w-full h-full object-contain ${
+                      remoteMediaStream ? "block" : "hidden"
+                    }`}
+                  />
+                  {!remoteMediaStream && screenFrameSrc && (
+                    <img
+                      src={screenFrameSrc}
+                      alt="Host Live Screen"
+                      className="w-full h-full object-contain block"
+                    />
+                  )}
+                  {!remoteMediaStream && !screenFrameSrc && (
+                    <div className="flex flex-col items-center justify-center p-8 text-center text-gray-400">
+                      <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mb-3" />
+                      <div className="text-xs font-semibold text-gray-200">
+                        Connecting to host screen broadcast…
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-1">
+                        Receiving live video feed
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-[11px] text-gray-400 text-center py-2">
+                  Screen share minimized. Click "Expand" to watch in high definition.
+                </div>
+              )
+            ) : (
+              <div className="aspect-video w-full bg-black/60 rounded-xl border border-white/5 flex flex-col items-center justify-center p-6 text-center">
+                <div className="text-4xl mb-3 animate-pulse">📺</div>
+                <div className="text-sm font-semibold text-gray-200 mb-1">
+                  Waiting for Host to Share Screen
+                </div>
+                <p className="text-xs text-gray-400 max-w-sm">
+                  The host is preparing their presentation. As soon as screen sharing starts, it will appear here in real time.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Interactive Live Q&A Section */}
+          <div className="card p-6 bg-white dark:bg-[#12142B] border border-[#E1E1DC] dark:border-[#2A2E52] shadow-sm rounded-2xl">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-4 mb-4 border-b border-[#E1E1DC] dark:border-[#2A2E52]">
+              <div className="flex items-center gap-2">
+                <span className="text-base">💬</span>
+                <div>
+                  <h3 className="font-display font-bold text-sm text-gray-900 dark:text-gray-100">
+                    Live Session Q&A
+                  </h3>
+                  <p className="text-[11px] text-gray-500">
+                    Ask questions live. The host sees questions in real-time and answers during the session.
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                {activity.allowQa ? (
+                  <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    Q&A Active
+                  </span>
+                ) : (
+                  <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                    ⏸️ Q&A Paused by Host
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Ask Host Input Box (if allowed) */}
+            {activity.allowQa ? (
+              <div className="mb-6 p-4 rounded-xl bg-[#FAF9F6] dark:bg-[#161836] border border-[#E1E1DC] dark:border-[#2A2E52]">
+                <label className="label text-xs mb-1.5 font-bold">Ask Host a Question</label>
+                <textarea
+                  rows={2}
+                  className="field text-xs sm:text-sm mb-2"
+                  placeholder="Type your question for the host here..."
+                  value={qaQuestion}
+                  onChange={(e) => setQaQuestion(e.target.value)}
+                />
+                {qaMsg && (
+                  <div className={`text-xs mb-2 font-medium ${qaMsg.includes("sent") ? "text-emerald-600" : "text-rose-500"}`}>
+                    {qaMsg}
+                  </div>
+                )}
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    className="btn-primary text-xs py-2 px-4 shadow-sm font-semibold flex items-center gap-1.5"
+                    onClick={submitLiveQuestion}
+                    disabled={qaSending || !qaQuestion.trim()}
+                  >
+                    <span>💬</span>
+                    <span>{qaSending ? "Sending…" : "Submit Question"}</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3.5 mb-6 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 text-xs">
+                ⚠️ The host has currently paused Q&A submissions. You can see answers below and ask again when re-enabled.
+              </div>
+            )}
+
+            {/* Live Questions Feed */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                  Questions Feed ({qaList.length})
+                </span>
+                <span className="text-[11px] text-gray-400 font-mono">Real-time updates</span>
+              </div>
+
+              {qaList.length === 0 ? (
+                <div className="py-8 text-center text-xs text-gray-400">
+                  No questions asked yet. Be the first to ask the host a question!
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {qaList.map((q) => {
+                    const isMyQuestion = q.participantId === guestId;
+
+                    return (
+                      <div
+                        key={q.id}
+                        className={`p-3.5 rounded-xl border transition-all ${
+                          q.isAnswered
+                            ? "bg-emerald-500/5 border-emerald-500/30"
+                            : "bg-[#FAFAF9] dark:bg-[#161836] border-[#E1E1DC] dark:border-[#2A2E52]"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-xs text-gray-900 dark:text-gray-100">
+                              {q.displayName || "Participant"}
+                            </span>
+                            {isMyQuestion && (
+                              <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-bold">
+                                You
+                              </span>
+                            )}
+                          </div>
+                          {q.isAnswered ? (
+                            <span className="text-[10px] font-bold text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 flex items-center gap-1">
+                              <span>✓</span> Answered
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-medium text-amber-600 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                              Pending Host
+                            </span>
+                          )}
+                        </div>
+
+                        <p className="text-xs text-gray-700 dark:text-gray-200 mb-2">
+                          {q.questionText}
+                        </p>
+
+                        {q.isAnswered && q.answerText && (
+                          <div className="mt-2 pt-2 border-t border-emerald-500/20 pl-2 border-l-2 border-l-emerald-500 text-xs">
+                            <span className="font-bold text-emerald-600 dark:text-emerald-400 mr-1">
+                              Host's Answer:
+                            </span>
+                            <span className="text-gray-800 dark:text-gray-200">{q.answerText}</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </main>
     );
@@ -232,6 +748,72 @@ export default function AttemptPage() {
             >
               ✕
             </button>
+          </div>
+        )}
+
+        {/* Real-Time Screen Share Viewer for Participant */}
+        {hostSharingScreen && (
+          <div className="card mb-6 p-4 border-2 border-primary/50 bg-[#0A0D1E] text-white shadow-xl rounded-2xl overflow-hidden">
+            <div className="flex items-center justify-between gap-2 pb-2.5 mb-2.5 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
+                </span>
+                <span className="text-xs font-bold text-gray-200 uppercase tracking-wider">
+                  Host's Screen (Live)
+                </span>
+                <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                  HD Real-Time
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setScreenExpanded((prev) => !prev)}
+                className="text-[11px] bg-white/10 hover:bg-white/20 text-gray-200 px-2.5 py-1 rounded-md transition-colors font-medium"
+              >
+                {screenExpanded ? "Minimize Screen" : "Expand Screen"}
+              </button>
+            </div>
+
+            {screenExpanded ? (
+              <div className="relative aspect-video w-full bg-black rounded-xl overflow-hidden flex items-center justify-center border border-white/10">
+                <video
+                  ref={(el) => {
+                    remoteVideoRef.current = el;
+                    if (el && remoteStreamRef.current) {
+                      el.srcObject = remoteStreamRef.current;
+                      el.play().catch(() => {});
+                    }
+                  }}
+                  autoPlay
+                  playsInline
+                  muted
+                  className={`w-full h-full object-contain ${
+                    remoteMediaStream ? "block" : "hidden"
+                  }`}
+                />
+                {!remoteMediaStream && screenFrameSrc && (
+                  <img
+                    src={screenFrameSrc}
+                    alt="Host Live Screen"
+                    className="w-full h-full object-contain block"
+                  />
+                )}
+                {!remoteMediaStream && !screenFrameSrc && (
+                  <div className="flex flex-col items-center justify-center p-8 text-center text-gray-400">
+                    <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mb-3" />
+                    <div className="text-xs font-semibold text-gray-200">
+                      Connecting to host screen broadcast…
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-[11px] text-gray-400 text-center py-1">
+                Host screen minimized. Click "Expand Screen" above to view.
+              </div>
+            )}
           </div>
         )}
 
@@ -366,6 +948,95 @@ export default function AttemptPage() {
             )}
           </div>
         </div>
+
+        {/* Floating Q&A Button for Participant (When Q&A is Allowed) */}
+        {activity?.allowQa && (
+          <button
+            type="button"
+            onClick={() => setShowQaModal(true)}
+            className="fixed bottom-6 right-6 z-40 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2.5 rounded-full shadow-lg flex items-center gap-2 transition-all hover:scale-105 border border-emerald-400/30"
+          >
+            <span>💬</span> Ask Host (Q&A)
+          </button>
+        )}
+
+        {/* Q&A Modal */}
+        {showQaModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+            <div className="card w-full max-w-md p-6 bg-white dark:bg-[#12142B] border border-[#E1E1DC] dark:border-[#2A2E52] shadow-2xl rounded-2xl relative">
+              <div className="flex items-center justify-between pb-3 mb-4 border-b border-[#E1E1DC] dark:border-[#2A2E52]">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                  <h3 className="font-display font-bold text-sm text-gray-900 dark:text-gray-100">
+                    Ask Host a Question
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowQaModal(false)}
+                  className="text-gray-400 hover:text-gray-600 text-sm font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {!activity?.allowQa ? (
+                <div>
+                  <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-700 dark:text-amber-400 text-xs text-center mb-4 font-medium">
+                    ⚠️ The host has temporarily paused Q&A for this session. You will be able to submit questions when the host re-enables it.
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs py-1.5 px-3"
+                      onClick={() => setShowQaModal(false)}
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Have a doubt or question during this session? The host will see it live on their screen.
+                  </p>
+
+                  <textarea
+                    rows={4}
+                    className="field text-xs sm:text-sm mb-3"
+                    placeholder="Type your question for the host..."
+                    value={qaQuestion}
+                    onChange={(e) => setQaQuestion(e.target.value)}
+                  />
+
+                  {qaMsg && (
+                    <div className={`text-xs mb-3 font-medium ${qaMsg.includes("sent") ? "text-emerald-600" : "text-red-500"}`}>
+                      {qaMsg}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs py-2 px-3"
+                      onClick={() => setShowQaModal(false)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-primary text-xs py-2 px-4 shadow-xs"
+                      onClick={submitLiveQuestion}
+                      disabled={qaSending || !qaQuestion.trim()}
+                    >
+                      {qaSending ? "Sending..." : "Submit Question"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </main>
   );

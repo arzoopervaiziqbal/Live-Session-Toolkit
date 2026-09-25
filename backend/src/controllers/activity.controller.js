@@ -243,6 +243,7 @@ const { generateLinkCode } = require("../utils/generateLink");
 const { extractTextFromFile } = require("../services/fileParser.service");
 const { generateQuestions, clampQuestionCount } = require("../services/ai.service");
 const { getEffectiveCorrectAnswer } = require("../services/scoring.service");
+const { emitToSession } = require("../socket");
 
 const VALID_CATEGORIES = ["quiz", "poll", "feedback", "qa"];
 const VALID_DIFFICULTIES = ["easy", "medium", "hard"];
@@ -265,6 +266,8 @@ async function createActivity(req, res) {
     difficulty: chosenDifficulty,
     linkId: generateLinkCode(),
     questions: [],
+    allowQa: Boolean(req.body.allowQa),
+    qaFeed: [],
     status: "draft",
   });
 
@@ -353,6 +356,9 @@ async function updateActivity(req, res) {
     }
     activity.expiresAt = expiresAt || null;
   }
+  if (req.body.allowQa !== undefined) {
+    activity.allowQa = Boolean(req.body.allowQa);
+  }
 
   await activity.save();
   res.json({ activity });
@@ -412,9 +418,6 @@ async function removeQuestion(req, res) {
 async function publish(req, res) {
   const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
   if (!activity) return res.status(404).json({ error: "Activity not found." });
-  if (!activity.questions || activity.questions.length === 0) {
-    return res.status(400).json({ error: "Add at least one question before publishing." });
-  }
   activity.status = "published";
   await activity.save();
   res.json({ activity });
@@ -443,7 +446,14 @@ async function getResults(req, res) {
 
   const byQuestion = {};
   (activity.questions || []).forEach((q) => {
-    byQuestion[q.questionId] = { questionText: q.questionText, type: q.type, correctAnswer: q.correctAnswer, answers: [] };
+    byQuestion[q.questionId] = {
+      questionId: q.questionId,
+      questionText: q.questionText,
+      type: q.type,
+      options: q.options || [],
+      correctAnswer: q.correctAnswer,
+      answers: [],
+    };
   });
   responses.forEach((r) => {
     if (byQuestion[r.questionId]) {
@@ -533,8 +543,30 @@ async function getResults(req, res) {
       )
     : 0;
 
+  const actJson = activity.toJSON ? activity.toJSON() : { ...activity };
+  if (typeof actJson.qaFeed === "string") {
+    try {
+      actJson.qaFeed = JSON.parse(actJson.qaFeed);
+    } catch (_) {
+      actJson.qaFeed = [];
+    }
+  }
+  if (!Array.isArray(actJson.qaFeed)) {
+    actJson.qaFeed = [];
+  }
+  if (typeof actJson.questions === "string") {
+    try {
+      actJson.questions = JSON.parse(actJson.questions);
+    } catch (_) {
+      actJson.questions = [];
+    }
+  }
+  if (!Array.isArray(actJson.questions)) {
+    actJson.questions = [];
+  }
+
   res.json({
-    activity,
+    activity: actJson,
     totalParticipants: participants.length,
     totalResponses: responses.length,
     completedParticipants: completedStudents.length,
@@ -572,6 +604,77 @@ async function exportCsv(req, res) {
   res.send(csv);
 }
 
+async function answerQa(req, res) {
+  const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+  if (!activity) return res.status(404).json({ error: "Activity not found." });
+
+  const { questionId } = req.params;
+  const { answer, isAnswered } = req.body;
+
+  let feed = [];
+  if (Array.isArray(activity.qaFeed)) {
+    feed = [...activity.qaFeed];
+  } else if (typeof activity.qaFeed === "string") {
+    try {
+      const parsed = JSON.parse(activity.qaFeed);
+      if (Array.isArray(parsed)) feed = parsed;
+    } catch (_) {}
+  }
+
+  const itemIndex = feed.findIndex((q) => q.id === questionId);
+  if (itemIndex === -1) return res.status(404).json({ error: "Q&A question not found." });
+
+  if (answer !== undefined) feed[itemIndex].answer = String(answer).trim();
+  if (isAnswered !== undefined) feed[itemIndex].isAnswered = Boolean(isAnswered);
+  if (answer && isAnswered === undefined) feed[itemIndex].isAnswered = true;
+
+  activity.qaFeed = feed;
+  activity.changed("qaFeed", true);
+  await activity.save();
+
+  emitToSession(activity.linkId, "qa-answered", { qaFeed: activity.qaFeed });
+
+  res.json({ success: true, qaFeed: activity.qaFeed });
+}
+
+async function deleteQa(req, res) {
+  const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+  if (!activity) return res.status(404).json({ error: "Activity not found." });
+
+  const { questionId } = req.params;
+  let feed = [];
+  if (Array.isArray(activity.qaFeed)) {
+    feed = [...activity.qaFeed];
+  } else if (typeof activity.qaFeed === "string") {
+    try {
+      const parsed = JSON.parse(activity.qaFeed);
+      if (Array.isArray(parsed)) feed = parsed;
+    } catch (_) {}
+  }
+
+  activity.qaFeed = feed.filter((q) => q.id !== questionId);
+  activity.changed("qaFeed", true);
+  await activity.save();
+
+  emitToSession(activity.linkId, "qa-deleted", { qaFeed: activity.qaFeed });
+
+  res.json({ success: true, qaFeed: activity.qaFeed });
+}
+
+async function toggleQa(req, res) {
+  const activity = await Activity.findOne({ where: { _id: req.params.id, hostId: req.user.id } });
+  if (!activity) return res.status(404).json({ error: "Activity not found." });
+
+  const { allowQa } = req.body;
+  activity.allowQa = Boolean(allowQa);
+  activity.changed("allowQa", true);
+  await activity.save();
+
+  emitToSession(activity.linkId, "qa-updated", { allowQa: activity.allowQa });
+
+  res.json({ success: true, allowQa: activity.allowQa, activity });
+}
+
 module.exports = {
   createActivity,
   uploadNotes,
@@ -584,4 +687,7 @@ module.exports = {
   closeActivity,
   getResults,
   exportCsv,
+  answerQa,
+  deleteQa,
+  toggleQa,
 };

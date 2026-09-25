@@ -10,7 +10,7 @@ module.exports = {
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "7d",
   clientUrl: process.env.CLIENT_URL || "http://localhost:3000",
   geminiApiKey: process.env.GEMINI_API_KEY || "",
-  geminiModel: process.env.GEMINI_MODEL || "gemini-3.5-flash",
+  geminiModel: process.env.GEMINI_MODEL || "gemini-3.5-flash-lite",
   anthropicApiKey: process.env.ANTHROPIC_API_KEY || "",
   anthropicModel: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6",
   groqApiKey: process.env.GROQ_API_KEY || "",

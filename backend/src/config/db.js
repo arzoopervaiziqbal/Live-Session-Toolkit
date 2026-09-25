@@ -43,6 +43,16 @@ async function connectDB() {
   // Use alter only on PostgreSQL; for SQLite just create any missing tables.
   const isSqlite = !env.databaseUrl;
   await sequelize.sync({ alter: !isSqlite });
+
+  if (isSqlite) {
+    try {
+      await sequelize.query("ALTER TABLE activities ADD COLUMN allowQa BOOLEAN DEFAULT 0;");
+    } catch (_) {}
+    try {
+      await sequelize.query("ALTER TABLE activities ADD COLUMN qaFeed TEXT DEFAULT '[]';");
+    } catch (_) {}
+  }
+
   console.log(`[db] Database tables synced successfully`);
 }
 

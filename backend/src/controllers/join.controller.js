@@ -3,6 +3,7 @@ const Activity = require("../models/Activity");
 const Participant = require("../models/Participant");
 const Response = require("../models/Response");
 const { computeScore } = require("../services/scoring.service");
+const { emitToSession } = require("../socket");
 
 function extractCleanCode(raw) {
   if (!raw || typeof raw !== "string") return "";
@@ -71,14 +72,10 @@ async function getActivityByCode(req, res) {
     return res.status(400).json({ error: "This live session has been closed by the host." });
   }
 
-  // If activity has questions, automatically ensure it's available to join
+  // Ensure session is published and available to join
   if (activity.status === "draft") {
-    if (activity.questions && activity.questions.length > 0) {
-      activity.status = "published";
-      await activity.save();
-    } else {
-      return res.status(400).json({ error: "This session has no questions prepared yet." });
-    }
+    activity.status = "published";
+    await activity.save();
   }
 
   // Don't leak correct answers to participants before they submit.
@@ -160,13 +157,60 @@ async function submitResponses(req, res) {
         hasScore: scoreResult.hasScore,
         percentage: scoreResult.scored > 0 ? Math.round((scoreResult.correct / scoreResult.scored) * 100) : null,
         submittedAt: new Date().toISOString(),
+        allowQa: Boolean(activity.allowQa),
+        linkId: activity.linkId,
+        participantId: participant._id,
       },
     });
   } catch (err) {
     console.error("Error submitting responses:", err);
-    res.status(500).json({ error: "Failed to save quiz responses. Please try again." });
+    res.status(500).json({ error: "Failed to save responses. Please try again." });
   }
 }
 
-module.exports = { getActivityByCode, submitResponses };
+// POST /api/join/:linkId/qa  body: { participantId, displayName, questionText }
+async function postParticipantQuestion(req, res) {
+  const activity = await findActivityByCode(req.params.linkId);
+  if (!activity) return res.status(404).json({ error: "No live session with that code." });
+
+  if (!activity.allowQa) {
+    return res.status(400).json({ error: "Q&A is not allowed for this session." });
+  }
+
+  const { participantId, displayName, questionText } = req.body;
+  const text = String(questionText || "").trim();
+  if (!text) {
+    return res.status(400).json({ error: "Please enter your question." });
+  }
+
+  const newQ = {
+    id: `qa_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+    participantId: participantId || null,
+    participantName: displayName || "Participant",
+    text,
+    answer: "",
+    isAnswered: false,
+    createdAt: new Date().toISOString(),
+  };
+
+  let currentFeed = [];
+  if (Array.isArray(activity.qaFeed)) {
+    currentFeed = activity.qaFeed;
+  } else if (typeof activity.qaFeed === "string") {
+    try {
+      const parsed = JSON.parse(activity.qaFeed);
+      if (Array.isArray(parsed)) currentFeed = parsed;
+    } catch (_) {}
+  }
+
+  activity.qaFeed = [...currentFeed, newQ];
+  activity.changed("qaFeed", true);
+  await activity.save();
+
+  emitToSession(activity.linkId, "qa-new-question", { item: newQ, qaFeed: activity.qaFeed });
+
+  res.status(201).json({ success: true, item: newQ, qaFeed: activity.qaFeed });
+}
+
+module.exports = { getActivityByCode, submitResponses, postParticipantQuestion };
 
