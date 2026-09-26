@@ -99,7 +99,7 @@ export default function NewTestPage() {
 
   return (
     <main className="min-h-screen">
-      <Navbar userName={user?.name} onLogout={logout} logoutLabel={t.logout_btn} />
+      <Navbar user={user} userName={user?.name} userEmail={user?.email} onLogout={logout} logoutLabel={t.logout_btn} />
 
       <div className="max-w-xl mx-auto px-6 py-8">
         <div className="mb-6">

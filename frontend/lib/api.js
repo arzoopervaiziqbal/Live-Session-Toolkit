@@ -66,8 +66,15 @@ async function request(path, { method = "GET", body, role, isForm = false } = {}
 export const api = {
   hostRegister: (body) => request("/auth/host/register", { method: "POST", body }),
   hostLogin: (body) => request("/auth/host/login", { method: "POST", body }),
+  hostGoogleLogin: (body) => request("/auth/host/google", { method: "POST", body }),
+  hostPhoneSendOtp: (phoneNumber) => request("/auth/host/phone/send-otp", { method: "POST", body: { phoneNumber } }),
+  hostPhoneVerifyOtp: (payload) => request("/auth/host/phone/verify-otp", { method: "POST", body: payload }),
+
   participantRegister: (body) => request("/auth/participant/register", { method: "POST", body }),
   participantLogin: (body) => request("/auth/participant/login", { method: "POST", body }),
+  participantGoogleLogin: (body) => request("/auth/participant/google", { method: "POST", body }),
+  participantPhoneSendOtp: (phoneNumber) => request("/auth/participant/phone/send-otp", { method: "POST", body: { phoneNumber } }),
+  participantPhoneVerifyOtp: (payload) => request("/auth/participant/phone/verify-otp", { method: "POST", body: payload }),
 
   listSessions: () => request("/sessions", { role: "host" }),
   createSession: (body) => request("/sessions", { method: "POST", body, role: "host" }),

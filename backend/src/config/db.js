@@ -57,6 +57,24 @@ async function connectDB() {
     try {
       await sequelize.query("ALTER TABLE participants ADD COLUMN proctorViolations TEXT DEFAULT '[]';");
     } catch (_) {}
+    try {
+      await sequelize.query("ALTER TABLE host_users ADD COLUMN phoneNumber VARCHAR(255);");
+    } catch (_) {}
+    try {
+      await sequelize.query("ALTER TABLE host_users ADD COLUMN authProvider VARCHAR(50) DEFAULT 'local';");
+    } catch (_) {}
+    try {
+      await sequelize.query("ALTER TABLE host_users ADD COLUMN googleId VARCHAR(255);");
+    } catch (_) {}
+    try {
+      await sequelize.query("ALTER TABLE participant_users ADD COLUMN phoneNumber VARCHAR(255);");
+    } catch (_) {}
+    try {
+      await sequelize.query("ALTER TABLE participant_users ADD COLUMN authProvider VARCHAR(50) DEFAULT 'local';");
+    } catch (_) {}
+    try {
+      await sequelize.query("ALTER TABLE participant_users ADD COLUMN googleId VARCHAR(255);");
+    } catch (_) {}
   }
 
   console.log(`[db] Database tables synced successfully`);

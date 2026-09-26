@@ -308,8 +308,16 @@ async function reportProctorAlert(req, res) {
     violations = [...participant.proctorViolations];
   } else if (typeof participant.proctorViolations === "string") {
     try {
-      violations = JSON.parse(participant.proctorViolations) || [];
-    } catch (_) {}
+      const parsed = JSON.parse(participant.proctorViolations);
+      violations = Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+      violations = [];
+    }
+  } else if (participant.proctorViolations && typeof participant.proctorViolations === "object") {
+    violations = Array.isArray(participant.proctorViolations) ? [...participant.proctorViolations] : [];
+  }
+  if (!Array.isArray(violations)) {
+    violations = [];
   }
 
   if (participant.status !== "disqualified") {

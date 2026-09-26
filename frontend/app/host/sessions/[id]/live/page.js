@@ -48,6 +48,11 @@ export default function LivePage() {
   const [activeProctorModal, setActiveProctorModal] = useState(null);
   const [decisionSubmitting, setDecisionSubmitting] = useState(false);
 
+  // Violations Panel State
+  const [violationsPanelOpen, setViolationsPanelOpen] = useState(true);
+  const [violationFilter, setViolationFilter] = useState("all"); // 'all' | 'pending' | 'resolved' | 'disqualified'
+  const [expandedViolationStudent, setExpandedViolationStudent] = useState(null);
+
   function playUrgentHostAlarm() {
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -320,7 +325,7 @@ export default function LivePage() {
   if (!ready || !results) {
     return (
       <main className="min-h-screen">
-        <Navbar userName={user?.name} onLogout={logout} logoutLabel={t.logout_btn} />
+        <Navbar user={user} userName={user?.name} userEmail={user?.email} onLogout={logout} logoutLabel={t.logout_btn} />
         <div className="max-w-4xl mx-auto px-6 py-16 text-center text-sm text-gray-400">
           Loading live session data…
         </div>
@@ -341,15 +346,21 @@ export default function LivePage() {
     if (!alert || !targetActId || decisionSubmitting) return;
     setDecisionSubmitting(true);
     const dec = decision === "approve" ? "continue" : decision;
+
+    const reasonMap = {
+      fail: `Disqualified by host for ${alert.violationType === "screen_crop" ? "screen cropping/resizing" : "switching tabs"} during the quiz.`,
+      warn: `Warning issued by host for ${alert.violationType === "screen_crop" ? "screen cropping/resizing" : "switching tabs"} during the quiz.`,
+    };
+
     try {
+      // "warn" is treated as "continue" on the backend but we track it in the alert
+      const backendDec = dec === "warn" ? "continue" : dec;
+
       await api.submitProctorDecision(targetActId, {
         participantId: alert.participantId,
         guestId: alert.guestId,
-        decision: dec,
-        reason:
-          dec === "fail"
-            ? `Disqualified by host for ${alert.violationType === "screen_crop" ? "screen cropping/resizing" : "switching tabs"} during the quiz.`
-            : undefined,
+        decision: backendDec,
+        reason: reasonMap[dec] || undefined,
       });
 
       const socket = getSocket();
@@ -360,11 +371,8 @@ export default function LivePage() {
         participantId: alert.participantId,
         guestId: alert.guestId,
         displayName: alert.displayName,
-        decision: dec,
-        reason:
-          dec === "fail"
-            ? `Disqualified by host for ${alert.violationType === "screen_crop" ? "screen cropping/resizing" : "switching tabs"} during the quiz.`
-            : undefined,
+        decision: backendDec,
+        reason: reasonMap[dec] || undefined,
       });
 
       setResults((prev) => {
@@ -382,6 +390,9 @@ export default function LivePage() {
                 ...s,
                 status: newStatus,
                 isDisqualified: dec === "fail",
+                lastDecision: dec,
+                lastDecisionTime: new Date().toISOString(),
+                warningCount: dec === "warn" ? (s.warningCount || 0) + 1 : (s.warningCount || 0),
                 score: dec === "fail" ? { ...s.score, correct: 0, percentage: 0 } : s.score,
               };
             }
@@ -390,9 +401,26 @@ export default function LivePage() {
         };
       });
 
-      setProctorAlerts((prev) =>
-        prev.filter((a) => a.guestId !== alert.guestId && a.participantId !== alert.participantId && a.id !== alert.id)
-      );
+      // For "warn" — keep the alert in history but mark it resolved; for others remove it
+      if (dec === "warn") {
+        setProctorAlerts((prev) =>
+          prev.map((a) => {
+            if (a.id === alert.id || a.guestId === alert.guestId || a.participantId === alert.participantId) {
+              return { ...a, resolved: true, resolution: "warned", resolvedAt: new Date().toISOString() };
+            }
+            return a;
+          })
+        );
+      } else {
+        setProctorAlerts((prev) =>
+          prev.map((a) => {
+            if (a.id === alert.id || a.guestId === alert.guestId || a.participantId === alert.participantId) {
+              return { ...a, resolved: true, resolution: dec, resolvedAt: new Date().toISOString() };
+            }
+            return a;
+          })
+        );
+      }
       setActiveProctorModal(null);
     } catch (err) {
       console.error("Failed to submit proctor decision:", err);
@@ -661,81 +689,6 @@ export default function LivePage() {
 
   return (
     <main className="min-h-screen pb-16 bg-[#FAFAF9] dark:bg-[#080915] relative">
-      {/* Real-time Anti-Cheat Violation Modal for Host */}
-      {activeProctorModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in">
-          <div className="card w-full max-w-lg p-6 bg-white dark:bg-[#12142B] border-2 border-rose-500 shadow-2xl rounded-2xl relative">
-            <div className="flex items-center justify-between pb-3 mb-4 border-b border-rose-500/30">
-              <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
-                <span className="text-xl animate-bounce">🚨</span>
-                <h3 className="font-display font-black text-base uppercase tracking-wide">
-                  Screen Switch Detected - Approval Required!
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setActiveProctorModal(null)}
-                className="text-gray-400 hover:text-gray-600 text-sm font-bold p-1 cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-900 dark:text-rose-200 mb-4">
-              <div className="flex items-center justify-between text-xs mb-2 font-bold">
-                <span>Student: {activeProctorModal.displayName || "Participant"}</span>
-                <span className="font-mono text-[10px] bg-rose-500/20 px-2 py-0.5 rounded text-rose-600 dark:text-rose-300">
-                  {activeProctorModal.timestamp ? new Date(activeProctorModal.timestamp).toLocaleTimeString() : "Just now"}
-                </span>
-              </div>
-              <div className="text-sm font-bold mb-1 text-gray-900 dark:text-gray-100">
-                {activeProctorModal.violationType === "screen_crop"
-                  ? "Screen Cropping / Window Resize Attempt"
-                  : activeProctorModal.violationType === "window_blur"
-                  ? "Window Focus Lost / Switched Application"
-                  : "Browser Tab Switched"}
-              </div>
-              <div className="text-xs text-gray-700 dark:text-gray-300 italic">
-                "{activeProctorModal.message}"
-              </div>
-            </div>
-
-            <p className="text-xs text-gray-600 dark:text-gray-300 mb-5 leading-relaxed">
-              The student switched screens or left the exam window. Their quiz is currently <strong>paused & locked</strong> waiting for your permission. Choose whether to approve the student so they can continue, or fail and disqualify them.
-            </p>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <button
-                type="button"
-                disabled={decisionSubmitting}
-                onClick={() => handleProctorDecision(activeProctorModal, "continue")}
-                className="btn-secondary py-3 px-4 rounded-xl font-bold text-xs flex flex-col items-center justify-center gap-1 border-emerald-500/50 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 cursor-pointer shadow-sm transition-all"
-              >
-                <div className="flex items-center gap-1.5 font-extrabold text-sm text-emerald-600 dark:text-emerald-400">
-                  <span>✓</span> Allow {activeProctorModal.displayName || "Student"} to Continue Quiz
-                </div>
-                <span className="text-[10px] text-gray-500 dark:text-gray-400 font-normal">
-                  Unlock quiz and let student continue
-                </span>
-              </button>
-
-              <button
-                type="button"
-                disabled={decisionSubmitting}
-                onClick={() => handleProctorDecision(activeProctorModal, "fail")}
-                className="btn-primary py-3 px-4 rounded-xl font-bold text-xs flex flex-col items-center justify-center gap-1 bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-700 hover:to-red-700 text-white border-0 shadow-md cursor-pointer transition-all"
-              >
-                <div className="flex items-center gap-1.5 font-extrabold text-sm">
-                  <span>🚫</span> Fail & Disqualify
-                </div>
-                <span className="text-[10px] text-rose-100 font-normal">
-                  Disqualify student with 0% mark
-                </span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {hostQaToast && (
         <div
@@ -778,72 +731,10 @@ export default function LivePage() {
           </div>
         </div>
       )}
-      <Navbar userName={user?.name} onLogout={logout} logoutLabel={t.logout_btn} />
+      <Navbar user={user} userName={user?.name} userEmail={user?.email} onLogout={logout} logoutLabel={t.logout_btn} />
 
       <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
-        {/* Persistent Screen Switch Approval Banner for Host */}
-        {lockedStudents.length > 0 && (
-          <div className="mb-6 p-4 sm:p-5 rounded-2xl bg-amber-500/15 dark:bg-amber-950/40 border-2 border-amber-500 text-amber-950 dark:text-amber-100 shadow-xl ring-4 ring-amber-500/20">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <div className="flex items-start gap-3">
-                <span className="text-3xl animate-bounce shrink-0">🔒</span>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-0.5 rounded-full bg-amber-500 text-white font-black text-[10px] uppercase tracking-wide">
-                      Host Action Required
-                    </span>
-                    <h3 className="font-bold text-sm sm:text-base text-gray-900 dark:text-gray-100">
-                      Screen Switch Detected - Student Quiz Paused!
-                    </h3>
-                  </div>
-                  <p className="text-xs text-amber-800 dark:text-amber-300 mt-1">
-                    Student switched screens or left the exam window. The quiz is locked. Click <strong>Approve & Continue</strong> below to unlock their quiz, or <strong>Fail</strong> to disqualify them.
-                  </p>
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
-                {lockedStudents.map((s) => (
-                  <div
-                    key={s.participantId || s.guestId}
-                    className="flex flex-wrap items-center gap-2 bg-white dark:bg-[#12142B] p-2.5 rounded-xl border border-amber-500/40 shadow-sm"
-                  >
-                    <span className="font-bold text-xs text-gray-900 dark:text-gray-100 px-1">
-                      {s.displayName}:
-                    </span>
-                    <button
-                      type="button"
-                      disabled={decisionSubmitting}
-                      onClick={() =>
-                        handleProctorDecision(
-                          { participantId: s.participantId, guestId: s.guestId, displayName: s.displayName },
-                          "continue"
-                        )
-                      }
-                      className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs shadow-sm transition-all flex items-center gap-1 cursor-pointer"
-                      title={`Allow ${s.displayName} to continue quiz`}
-                    >
-                      <span>✓</span> Allow {s.displayName} to Continue Quiz
-                    </button>
-                    <button
-                      type="button"
-                      disabled={decisionSubmitting}
-                      onClick={() =>
-                        handleProctorDecision(
-                          { participantId: s.participantId, guestId: s.guestId, displayName: s.displayName },
-                          "fail"
-                        )
-                      }
-                      className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-extrabold text-xs shadow-sm transition-all flex items-center gap-1 cursor-pointer"
-                      title="Fail and disqualify student"
-                    >
-                      <span>🚫</span> Fail
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
+
 
         {/* Top Header */}
         <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
@@ -1009,7 +900,7 @@ export default function LivePage() {
         </div>
 
         {/* Live Metric Cards Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-8">
           <div className="card p-4 bg-white dark:bg-[#12142B] border border-[#E1E1DC] dark:border-[#2A2E52]">
             <div className="text-[11px] text-gray-500 font-medium mb-1">Total Joined</div>
             <div className="font-display text-2xl sm:text-3xl font-bold text-gray-900 dark:text-gray-100">
@@ -1047,7 +938,151 @@ export default function LivePage() {
             </div>
             <div className="text-[11px] text-gray-400">from completed participants</div>
           </div>
+
+          {/* Violations Count Metric */}
+          <div className={`card p-4 bg-white dark:bg-[#12142B] border ${
+            proctorAlerts.filter((a) => !a.resolved).length > 0
+              ? "border-rose-500/50 ring-2 ring-rose-500/20"
+              : "border-rose-500/20"
+          }`}>
+            <div className="text-[11px] text-rose-600 dark:text-rose-400 font-medium mb-1 flex items-center gap-1">
+              <span>🛡️</span> Violations
+            </div>
+            <div className="font-display text-2xl sm:text-3xl font-bold text-rose-600 dark:text-rose-400">
+              {proctorAlerts.length}
+            </div>
+            <div className="text-[11px] text-gray-400">
+              {proctorAlerts.filter((a) => !a.resolved).length > 0
+                ? `${proctorAlerts.filter((a) => !a.resolved).length} pending action`
+                : "all resolved"}
+            </div>
+          </div>
         </div>
+
+        {/* Simple List of Students who switched tabs/screen */}
+        {(() => {
+          const violationStudentsMap = new Map();
+
+          // 1. From real-time proctor alerts
+          proctorAlerts.forEach((alert) => {
+            const key = alert.participantId || alert.guestId;
+            if (!key) return;
+            if (!violationStudentsMap.has(key)) {
+              violationStudentsMap.set(key, {
+                participantId: alert.participantId,
+                guestId: alert.guestId,
+                displayName: alert.displayName || "Student",
+                hasPending: !alert.resolved,
+                status: alert.resolved ? (alert.resolution === "fail" ? "disqualified" : "continued") : "pending",
+              });
+            } else {
+              const entry = violationStudentsMap.get(key);
+              if (!alert.resolved) {
+                entry.hasPending = true;
+                entry.status = "pending";
+              }
+            }
+          });
+
+          // 2. From all students in results
+          allStudents.forEach((s) => {
+            const key = s.participantId || s.guestId;
+            if (!key) return;
+            const violations = Array.isArray(s.proctorViolations) ? s.proctorViolations : [];
+            if (violations.length > 0 || s.status === "locked" || s.status === "disqualified" || violationStudentsMap.has(key)) {
+              if (!violationStudentsMap.has(key)) {
+                violationStudentsMap.set(key, {
+                  participantId: s.participantId,
+                  guestId: s.guestId,
+                  displayName: s.displayName || "Student",
+                  hasPending: s.status === "locked",
+                  status: s.status === "disqualified" ? "disqualified" : s.status === "locked" ? "pending" : "continued",
+                });
+              } else {
+                const entry = violationStudentsMap.get(key);
+                entry.displayName = s.displayName || entry.displayName;
+                if (s.status === "disqualified") {
+                  entry.status = "disqualified";
+                  entry.hasPending = false;
+                } else if (s.status === "locked") {
+                  entry.hasPending = true;
+                  entry.status = "pending";
+                }
+              }
+            }
+          });
+
+          const violationStudents = Array.from(violationStudentsMap.values());
+          if (violationStudents.length === 0) return null;
+
+          return (
+            <div className="card p-5 mb-6 bg-white dark:bg-[#12142B] border border-amber-500/30 dark:border-amber-500/20 shadow-sm rounded-2xl">
+              <div className="flex items-center justify-between pb-3 mb-4 border-b border-[#E1E1DC] dark:border-[#2A2E52]">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
+                  <h2 className="font-display text-sm font-bold text-gray-900 dark:text-gray-100">
+                    Screen Switch Detected ({violationStudents.length})
+                  </h2>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {violationStudents.map((student) => {
+                  const key = student.participantId || student.guestId;
+                  const isDisqualified = student.status === "disqualified" || student.status === "fail";
+                  const isContinued = student.status === "continued" || (!student.hasPending && !isDisqualified);
+
+                  return (
+                    <div
+                      key={key}
+                      className="flex items-center justify-between gap-3 p-3 rounded-xl bg-[#FAF9F6] dark:bg-[#161836] border border-[#E1E1DC] dark:border-[#2A2E52]"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="font-semibold text-sm text-gray-900 dark:text-gray-100 truncate">
+                          {student.displayName}
+                        </span>
+                        {isDisqualified && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-600 border border-rose-500/30 uppercase">
+                            Rejected
+                          </span>
+                        )}
+                        {isContinued && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 border border-emerald-500/30 uppercase">
+                            Continued
+                          </span>
+                        )}
+                        {student.hasPending && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 border border-amber-500/30 uppercase animate-pulse">
+                            Pending
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          disabled={decisionSubmitting}
+                          onClick={() => handleProctorDecision(student, "continue")}
+                          className="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          Continue
+                        </button>
+                        <button
+                          type="button"
+                          disabled={decisionSubmitting}
+                          onClick={() => handleProctorDecision(student, "fail")}
+                          className="text-xs font-bold px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Live Poll Results Breakdown (if Poll) */}
         {isPoll && results?.byQuestion && Object.keys(results.byQuestion).length > 0 && (
@@ -1130,16 +1165,25 @@ export default function LivePage() {
 
         {/* Live Student Roster Section */}
         <div className="card p-6 bg-white dark:bg-[#12142B] border border-[#E1E1DC] dark:border-[#2A2E52] shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-4 border-b border-[#E1E1DC] dark:border-[#2A2E52]">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-4 pb-4 border-b border-[#E1E1DC] dark:border-[#2A2E52]">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2.5 mb-1.5">
                 <h2 className="font-display text-lg font-bold">Students & Participants</h2>
-                <span className="text-[11px] text-gray-400 font-mono bg-[#F0F0EB] dark:bg-[#1B1E3F] px-2 py-0.5 rounded-full">
-                  Auto-syncing
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                    {pendingCount} Attempting
+                  </span>
+                  <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                    <span>✓</span> {completedCount} Done
+                  </span>
+                  <span className="text-[11px] text-gray-500 dark:text-gray-400 font-mono bg-[#F0F0EB] dark:bg-[#1B1E3F] px-2 py-0.5 rounded-full">
+                    {allStudents.length} Total
+                  </span>
+                </div>
               </div>
               <p className="text-xs text-gray-500">
-                Track which participants are done with the quiz and view their scores
+                <strong className="text-amber-600 dark:text-amber-400 font-semibold">{pendingCount} attempting</strong> quiz • <strong className="text-emerald-600 dark:text-emerald-400 font-semibold">{completedCount} done</strong> with quiz (out of {allStudents.length} total participants)
               </p>
             </div>
 
@@ -1158,28 +1202,28 @@ export default function LivePage() {
                   type="button"
                   onClick={() => setFilter("all")}
                   className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
-                    filter === "all" ? "bg-white dark:bg-[#2A2E52] shadow-xs text-primary" : "text-gray-500"
+                    filter === "all" ? "bg-white dark:bg-[#2A2E52] shadow-xs text-primary font-bold" : "text-gray-500"
                   }`}
                 >
                   All ({allStudents.length})
                 </button>
                 <button
                   type="button"
-                  onClick={() => setFilter("done")}
-                  className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
-                    filter === "done" ? "bg-white dark:bg-[#2A2E52] shadow-xs text-emerald-600" : "text-gray-500"
-                  }`}
-                >
-                  Done ({completedCount})
-                </button>
-                <button
-                  type="button"
                   onClick={() => setFilter("pending")}
                   className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
-                    filter === "pending" ? "bg-white dark:bg-[#2A2E52] shadow-xs text-amber-600" : "text-gray-500"
+                    filter === "pending" ? "bg-white dark:bg-[#2A2E52] shadow-xs text-amber-600 font-bold" : "text-gray-500"
                   }`}
                 >
                   Attempting ({pendingCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilter("done")}
+                  className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                    filter === "done" ? "bg-white dark:bg-[#2A2E52] shadow-xs text-emerald-600 font-bold" : "text-gray-500"
+                  }`}
+                >
+                  Done ({completedCount})
                 </button>
               </div>
             </div>
@@ -1243,44 +1287,8 @@ export default function LivePage() {
                         </div>
                       </div>
 
-                      {/* Status, Anti-Cheat Violations, & Marks */}
+                      {/* Status & Marks */}
                       <div className="flex flex-wrap items-center gap-2">
-                        {/* Proctoring Badges */}
-                        {(() => {
-                          const isStudentLocked =
-                            student.status === "locked" ||
-                            (!student.isDone &&
-                              !student.isDisqualified &&
-                              proctorAlerts.some(
-                                (a) =>
-                                  (a.guestId && a.guestId === student.guestId) ||
-                                  (a.participantId && a.participantId === student.participantId)
-                              ));
-
-                          if (isStudentLocked) {
-                            return (
-                              <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/40 flex items-center gap-1.5 animate-pulse">
-                                <span>🔒</span> Screen Switched (Waiting for Approval)
-                              </span>
-                            );
-                          }
-                          if (student.isDisqualified || student.status === "disqualified") {
-                            return (
-                              <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-rose-500/15 text-rose-500 border border-rose-500/30 flex items-center gap-1">
-                                <span>🚫</span> Failed (Disqualified)
-                              </span>
-                            );
-                          }
-                          if (student.violationCount > 0 || (student.proctorViolations && student.proctorViolations.length > 0)) {
-                            return (
-                              <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/30 flex items-center gap-1">
-                                <span>⚠️</span> {student.violationCount || student.proctorViolations?.length} Violations
-                              </span>
-                            );
-                          }
-                          return null;
-                        })()}
-
                         {student.isDone ? (
                           <div className="flex items-center gap-2">
                             <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/30 flex items-center gap-1">
@@ -1303,111 +1311,6 @@ export default function LivePage() {
                             Attempting
                           </span>
                         )}
-
-                        {/* Host Anti-Cheat Action Controls */}
-                        <div className="flex items-center gap-1.5 ml-1">
-                          {(() => {
-                            const isStudentLocked =
-                              student.status === "locked" ||
-                              (!student.isDone &&
-                                !student.isDisqualified &&
-                                proctorAlerts.some(
-                                  (a) =>
-                                    (a.guestId && a.guestId === student.guestId) ||
-                                    (a.participantId && a.participantId === student.participantId)
-                                ));
-
-                            if (isStudentLocked) {
-                              return (
-                                <>
-                                  <button
-                                    type="button"
-                                    disabled={decisionSubmitting}
-                                    onClick={() =>
-                                      handleProctorDecision(
-                                        { participantId: student.participantId, guestId: student.guestId, displayName: student.displayName },
-                                        "continue"
-                                      )
-                                    }
-                                    className="text-[11px] font-extrabold px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs transition-colors cursor-pointer flex items-center gap-1"
-                                    title={`Allow ${student.displayName} to continue quiz`}
-                                  >
-                                    <span>✓</span> Allow {student.displayName} to Continue Quiz
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={decisionSubmitting}
-                                    onClick={() =>
-                                      handleProctorDecision(
-                                        { participantId: student.participantId, guestId: student.guestId, displayName: student.displayName },
-                                        "fail"
-                                      )
-                                    }
-                                    className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white shadow-xs transition-colors cursor-pointer flex items-center gap-1"
-                                    title="Fail and disqualify student"
-                                  >
-                                    <span>🚫</span> Fail Student
-                                  </button>
-                                </>
-                              );
-                            }
-
-                            if (student.isDisqualified || student.status === "disqualified") {
-                              return (
-                                <button
-                                  type="button"
-                                  disabled={decisionSubmitting}
-                                  onClick={() =>
-                                    handleProctorDecision(
-                                      { participantId: student.participantId, guestId: student.guestId, displayName: student.displayName },
-                                      "continue"
-                                    )
-                                  }
-                                  className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 border border-emerald-500/30 transition-colors cursor-pointer"
-                                  title="Restore and allow student"
-                                >
-                                  ✓ Re-Approve & Restore
-                                </button>
-                              );
-                            }
-
-                            return (
-                              <>
-                                <button
-                                  type="button"
-                                  disabled={decisionSubmitting}
-                                  onClick={() =>
-                                    handleProctorDecision(
-                                      { participantId: student.participantId, guestId: student.guestId, displayName: student.displayName },
-                                      "lock"
-                                    )
-                                  }
-                                  className="text-[11px] font-medium px-2 py-1 rounded-md bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 border border-amber-500/25 transition-colors cursor-pointer"
-                                  title="Lock / Pause student quiz"
-                                >
-                                  Pause Quiz
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={decisionSubmitting}
-                                  onClick={() => {
-                                    setActiveProctorModal({
-                                      participantId: student.participantId,
-                                      guestId: student.guestId,
-                                      displayName: student.displayName,
-                                      violationType: "tab_switch",
-                                      message: "Host manually deciding on student exam permission.",
-                                    });
-                                  }}
-                                  className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/20 transition-colors cursor-pointer"
-                                  title="Fail student"
-                                >
-                                  Fail Student
-                                </button>
-                              </>
-                            );
-                          })()}
-                        </div>
                       </div>
                     </div>
                   </div>

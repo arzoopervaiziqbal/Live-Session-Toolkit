@@ -15,4 +15,8 @@ module.exports = {
   anthropicModel: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6",
   groqApiKey: process.env.GROQ_API_KEY || "",
   groqModel: process.env.GROQ_MODEL || "openai/gpt-oss-20b",
+  // Twilio SMS (for real OTP delivery)
+  twilioAccountSid: process.env.TWILIO_ACCOUNT_SID || "",
+  twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || "",
+  twilioPhoneNumber: process.env.TWILIO_PHONE_NUMBER || "",
 };

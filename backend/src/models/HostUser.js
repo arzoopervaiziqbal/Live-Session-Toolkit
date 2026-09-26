@@ -20,6 +20,18 @@ const HostUser = sequelize.define("HostUser", {
     type: DataTypes.STRING,
     allowNull: false,
   },
+  phoneNumber: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+  authProvider: {
+    type: DataTypes.STRING,
+    defaultValue: "local",
+  },
+  googleId: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
 }, {
   tableName: "host_users",
   timestamps: true,

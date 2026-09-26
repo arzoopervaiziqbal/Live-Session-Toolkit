@@ -439,7 +439,7 @@ export default function HostDashboard() {
 
   return (
     <main className="min-h-screen">
-      <Navbar userName={user?.name} onLogout={logout} logoutLabel={t.logout_btn} />
+      <Navbar user={user} userName={user?.name} userEmail={user?.email} onLogout={logout} logoutLabel={t.logout_btn} />
 
       <div className="max-w-4xl mx-auto px-6 py-8">
         {/* Real-time Anti-Cheat Violation Modal for Host on Dashboard */}
@@ -575,8 +575,16 @@ export default function HostDashboard() {
         {/* Top Header with Create Session and Create Test options */}
         <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
           <div>
-            <h1 className="font-display text-2xl font-bold">{t.dashboard_title || "Host Dashboard"}</h1>
-            <p className="text-xs text-gray-500">Manage your live interactive sessions, tests, and student assessments</p>
+            <div className="flex items-center gap-2.5">
+              <span className="text-2xl">🎙️</span>
+              <h1 className="font-display text-2xl font-bold">Host & Proctor Suite</h1>
+              <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-primary/10 text-primary dark:text-indigo-300 border border-primary/20">
+                Live Session Toolkit
+              </span>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Manage your live interactive sessions, tests, and student assessments
+            </p>
           </div>
           <div className="flex items-center gap-2.5">
             {/* Option 1: Create Session */}
@@ -954,102 +962,108 @@ export default function HostDashboard() {
 
         {/* DEDICATED CREATE SESSION MODAL (ONLY SESSION OPTIONS - ZERO TEST-RELATED OPTIONS) */}
         {showSessionModal && (
-          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="card max-w-md w-full p-6 shadow-xl rounded-2xl animate-in fade-in zoom-in-95 duration-150">
-              <div className="flex justify-between items-center mb-3">
+          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+            <div className="card max-w-md w-full p-5 sm:p-6 shadow-xl rounded-2xl animate-in fade-in zoom-in-95 duration-150 my-auto max-h-[90vh] flex flex-col overflow-hidden">
+              <div className="flex justify-between items-center pb-3 border-b border-[#E1E1DC] dark:border-[#2A2E52] shrink-0 mb-3">
                 <h2 className="font-display font-bold text-lg flex items-center gap-2 text-gray-900 dark:text-gray-100">
                   <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse" />
                   <span>Create Live Session</span>
                 </h2>
                 <button
                   type="button"
-                  className="text-gray-400 hover:text-gray-600 text-sm cursor-pointer"
+                  className="text-gray-400 hover:text-gray-600 text-sm cursor-pointer p-1"
                   onClick={() => setShowSessionModal(false)}
                 >
                   ✕
                 </button>
               </div>
 
-              <p className="text-xs text-gray-500 mb-4 leading-relaxed">
-                Launch an instant live session with screen sharing and live Q&A. No quiz or test questions required.
-              </p>
+              <form onSubmit={handleCreateLiveSession} className="flex flex-col flex-1 min-h-0">
+                <div className="overflow-y-auto flex-1 pr-1 space-y-3">
+                  <p className="text-xs text-gray-500 mb-2 leading-relaxed">
+                    Launch an instant live session with screen sharing and live Q&A. No quiz or test questions required.
+                  </p>
 
-              <form onSubmit={handleCreateLiveSession}>
-                <label className="label">Session Name *</label>
-                <input
-                  className="field mb-3"
-                  placeholder="e.g. Live Class, Team Presentation, Workshop"
-                  value={newSession.title}
-                  autoFocus
-                  onChange={(e) => setNewSession({ ...newSession, title: e.target.value })}
-                />
-
-                <label className="label">Description (Optional)</label>
-                <textarea
-                  className="field mb-3"
-                  rows={2}
-                  placeholder="Brief agenda or session topic..."
-                  value={newSession.description}
-                  onChange={(e) => setNewSession({ ...newSession, description: e.target.value })}
-                />
-
-                <div className="grid grid-cols-2 gap-3 mb-4">
                   <div>
-                    <label className="label">Date & Time</label>
+                    <label className="label">Session Name *</label>
                     <input
-                      type="datetime-local"
-                      className="field text-xs"
-                      value={newSession.date}
-                      onChange={(e) => setNewSession({ ...newSession, date: e.target.value })}
+                      className="field"
+                      placeholder="e.g. Live Class, Team Presentation, Workshop"
+                      value={newSession.title}
+                      autoFocus
+                      onChange={(e) => setNewSession({ ...newSession, title: e.target.value })}
                     />
                   </div>
+
                   <div>
-                    <label className="label">Initial Status</label>
-                    <select
-                      className="field text-xs"
-                      value={newSession.status}
-                      onChange={(e) => setNewSession({ ...newSession, status: e.target.value })}
-                    >
-                      <option value="draft">Draft</option>
-                      <option value="active">Active</option>
-                      <option value="closed">Closed</option>
-                    </select>
+                    <label className="label">Description (Optional)</label>
+                    <textarea
+                      className="field"
+                      rows={2}
+                      placeholder="Brief agenda or session topic..."
+                      value={newSession.description}
+                      onChange={(e) => setNewSession({ ...newSession, description: e.target.value })}
+                    />
                   </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="label">Date & Time</label>
+                      <input
+                        type="datetime-local"
+                        className="field text-xs"
+                        value={newSession.date}
+                        onChange={(e) => setNewSession({ ...newSession, date: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="label">Initial Status</label>
+                      <select
+                        className="field text-xs"
+                        value={newSession.status}
+                        onChange={(e) => setNewSession({ ...newSession, status: e.target.value })}
+                      >
+                        <option value="draft">Draft</option>
+                        <option value="active">Active</option>
+                        <option value="closed">Closed</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="label">Live Participant Q&A</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSessionQa(true)}
+                        className={`p-2.5 rounded-xl border text-xs text-left transition-all cursor-pointer ${
+                          sessionQa
+                            ? "border-emerald-500 bg-emerald-500/10 text-emerald-600 font-bold ring-1 ring-emerald-500/30"
+                            : "border-[#E1E1DC] dark:border-[#2A2E52] text-gray-500 opacity-80 hover:opacity-100"
+                        }`}
+                      >
+                        <div className="font-semibold text-emerald-600 dark:text-emerald-400">✓ Q&A Enabled</div>
+                        <div className="text-[10px] text-gray-400 mt-0.5">Students can ask questions</div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSessionQa(false)}
+                        className={`p-2.5 rounded-xl border text-xs text-left transition-all cursor-pointer ${
+                          !sessionQa
+                            ? "border-primary bg-primary/10 font-bold ring-1 ring-primary/30"
+                            : "border-[#E1E1DC] dark:border-[#2A2E52] text-gray-500 opacity-80 hover:opacity-100"
+                        }`}
+                      >
+                        <div className="text-gray-900 dark:text-gray-100 font-semibold">✕ Q&A Disabled</div>
+                        <div className="text-[10px] text-gray-400 mt-0.5">Screen sharing only</div>
+                      </button>
+                    </div>
+                  </div>
+
+                  {sessionError && <div className="error-text text-xs">{sessionError}</div>}
                 </div>
 
-                <div className="mb-4">
-                  <label className="label">Live Participant Q&A</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setSessionQa(true)}
-                      className={`p-2.5 rounded-xl border text-xs text-left transition-all cursor-pointer ${
-                        sessionQa
-                          ? "border-emerald-500 bg-emerald-500/10 text-emerald-600 font-bold ring-1 ring-emerald-500/30"
-                          : "border-[#E1E1DC] dark:border-[#2A2E52] text-gray-500 opacity-80 hover:opacity-100"
-                      }`}
-                    >
-                      <div className="font-semibold text-emerald-600 dark:text-emerald-400">✓ Q&A Enabled</div>
-                      <div className="text-[10px] text-gray-400 mt-0.5">Students can ask questions</div>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSessionQa(false)}
-                      className={`p-2.5 rounded-xl border text-xs text-left transition-all cursor-pointer ${
-                        !sessionQa
-                          ? "border-primary bg-primary/10 font-bold ring-1 ring-primary/30"
-                          : "border-[#E1E1DC] dark:border-[#2A2E52] text-gray-500 opacity-80 hover:opacity-100"
-                      }`}
-                    >
-                      <div className="text-gray-900 dark:text-gray-100 font-semibold">✕ Q&A Disabled</div>
-                      <div className="text-[10px] text-gray-400 mt-0.5">Screen sharing only</div>
-                    </button>
-                  </div>
-                </div>
-
-                {sessionError && <div className="error-text mb-4 text-xs">{sessionError}</div>}
-
-                <div className="flex justify-end gap-2 pt-2">
+                <div className="flex items-center justify-end gap-2 pt-3 mt-3 border-t border-[#E1E1DC] dark:border-[#2A2E52] shrink-0">
                   <button
                     type="button"
                     className="btn-secondary text-xs cursor-pointer"
@@ -1060,7 +1074,7 @@ export default function HostDashboard() {
                   </button>
                   <button
                     type="submit"
-                    className="btn-primary bg-rose-600 hover:bg-rose-700 text-white border-rose-500 text-xs font-bold cursor-pointer shadow-sm"
+                    className="btn-primary bg-rose-600 hover:bg-rose-700 text-white border-rose-500 text-xs font-bold cursor-pointer shadow-sm disabled:opacity-60"
                     disabled={startingSession}
                   >
                     {startingSession ? "Starting Live Session…" : "🔴 Start Live Session Now 🚀"}
@@ -1073,9 +1087,9 @@ export default function HostDashboard() {
 
         {/* DEDICATED CREATE TEST MODAL (QUIZ / POLL -> AI OR MANUAL) */}
         {showTestModal && (
-          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="card max-w-lg w-full p-6 shadow-xl rounded-2xl animate-in fade-in zoom-in-95 duration-150">
-              <div className="flex justify-between items-center mb-4">
+          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+            <div className="card max-w-lg w-full p-5 sm:p-6 shadow-xl rounded-2xl animate-in fade-in zoom-in-95 duration-150 my-auto max-h-[90vh] flex flex-col overflow-hidden">
+              <div className="flex justify-between items-center pb-3 border-b border-[#E1E1DC] dark:border-[#2A2E52] shrink-0 mb-4">
                 <div className="flex items-center gap-2">
                   <span className="text-xl">{testType === "poll" ? "📊" : "📝"}</span>
                   <h2 className="font-display font-bold text-lg text-gray-900 dark:text-gray-100">
@@ -1088,7 +1102,7 @@ export default function HostDashboard() {
                 </div>
                 <button
                   type="button"
-                  className="text-gray-400 hover:text-gray-600 text-sm cursor-pointer"
+                  className="text-gray-400 hover:text-gray-600 text-sm cursor-pointer p-1"
                   onClick={() => setShowTestModal(false)}
                 >
                   ✕
@@ -1097,7 +1111,7 @@ export default function HostDashboard() {
 
               {/* Stage 1: Choose between AI or Manual if not chosen yet */}
               {testMethod === null ? (
-                <div className="space-y-4">
+                <div className="overflow-y-auto flex-1 space-y-4 pr-1">
                   <div className="flex items-center justify-between pb-3 border-b border-[#E1E1DC] dark:border-[#2A2E52]">
                     <span className="text-xs text-gray-500">
                       Feature: <strong className="capitalize text-gray-900 dark:text-gray-100">{testType}</strong>
@@ -1151,166 +1165,168 @@ export default function HostDashboard() {
                 </div>
               ) : (
                 /* Stage 2: Form for AI or Manual */
-                <form onSubmit={handleCreateTest} className="space-y-4">
-                  <div className="flex items-center justify-between pb-2 border-b border-[#E1E1DC] dark:border-[#2A2E52]">
-                    <button
-                      type="button"
-                      onClick={() => setTestMethod(null)}
-                      className="text-xs text-primary font-semibold hover:underline flex items-center gap-1 cursor-pointer"
-                    >
-                      ← Back to Choose Method
-                    </button>
-                    <span className="text-[11px] text-gray-400 capitalize">
-                      {testType} • {testMethod === "ai" ? "AI Generated" : "Manual Authoring"}
-                    </span>
-                  </div>
+                <form onSubmit={handleCreateTest} className="flex flex-col flex-1 min-h-0">
+                  <div className="overflow-y-auto flex-1 space-y-4 pr-1">
+                    <div className="flex items-center justify-between pb-2 border-b border-[#E1E1DC] dark:border-[#2A2E52]">
+                      <button
+                        type="button"
+                        onClick={() => setTestMethod(null)}
+                        className="text-xs text-primary font-semibold hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        ← Back to Choose Method
+                      </button>
+                      <span className="text-[11px] text-gray-400 capitalize">
+                        {testType} • {testMethod === "ai" ? "AI Generated" : "Manual Authoring"}
+                      </span>
+                    </div>
 
-                  <div>
-                    <label className="label">{testType === "poll" ? "Poll Title *" : "Quiz Title *"}</label>
-                    <input
-                      className="field"
-                      placeholder={testType === "poll" ? "e.g. Session Feedback Poll" : "e.g. Full-Stack Web Development Quiz 1"}
-                      value={testName}
-                      autoFocus
-                      onChange={(e) => setTestName(e.target.value)}
-                    />
-                  </div>
-
-                  {testType === "quiz" && (
                     <div>
-                      <label className="label">Difficulty</label>
-                      <div className="flex gap-2">
-                        {["easy", "medium", "hard"].map((d) => (
-                          <button
-                            type="button"
-                            key={d}
-                            onClick={() => setTestDifficulty(d)}
-                            className={`flex-1 py-1.5 rounded-lg border text-xs capitalize cursor-pointer transition-all ${
-                              testDifficulty === d
-                                ? "border-primary bg-primary/10 font-bold text-primary ring-1 ring-primary/30"
-                                : "border-[#E1E1DC] dark:border-[#2A2E52] text-gray-500"
-                            }`}
-                          >
-                            {d}
-                          </button>
-                        ))}
-                      </div>
+                      <label className="label">{testType === "poll" ? "Poll Title *" : "Quiz Title *"}</label>
+                      <input
+                        className="field"
+                        placeholder={testType === "poll" ? "e.g. Session Feedback Poll" : "e.g. Full-Stack Web Development Quiz 1"}
+                        value={testName}
+                        autoFocus
+                        onChange={(e) => setTestName(e.target.value)}
+                      />
                     </div>
-                  )}
 
-                  {testMethod === "ai" && (
-                    <>
+                    {testType === "quiz" && (
                       <div>
-                        <label className="label">
-                          Number of Questions: <strong className="text-primary">{testQuestionCount}</strong>
-                        </label>
-                        <div className="flex items-center gap-3">
-                          <input
-                            type="range"
-                            min={1}
-                            max={20}
-                            step={1}
-                            value={testQuestionCount}
-                            onChange={(e) => setTestQuestionCount(Number(e.target.value))}
-                            className="flex-1 cursor-pointer"
-                          />
-                          <input
-                            type="number"
-                            min={1}
-                            max={20}
-                            value={testQuestionCount}
-                            onChange={(e) => {
-                              const n = Number(e.target.value);
-                              if (Number.isFinite(n)) setTestQuestionCount(Math.min(20, Math.max(1, n)));
-                            }}
-                            className="field w-16 text-center py-1 text-xs"
-                          />
+                        <label className="label">Difficulty</label>
+                        <div className="flex gap-2">
+                          {["easy", "medium", "hard"].map((d) => (
+                            <button
+                              type="button"
+                              key={d}
+                              onClick={() => setTestDifficulty(d)}
+                              className={`flex-1 py-1.5 rounded-lg border text-xs capitalize cursor-pointer transition-all ${
+                                testDifficulty === d
+                                  ? "border-primary bg-primary/10 font-bold text-primary ring-1 ring-primary/30"
+                                  : "border-[#E1E1DC] dark:border-[#2A2E52] text-gray-500"
+                              }`}
+                            >
+                              {d}
+                            </button>
+                          ))}
                         </div>
                       </div>
+                    )}
 
-                      <div>
-                        <label className="label">Notes / Source Material *</label>
-                        <div className="flex bg-[#F5F5F2] dark:bg-[#0E1020] rounded-lg p-1 border border-[#E1E1DC] dark:border-[#2A2E52] mb-2 w-fit">
-                          <button
-                            type="button"
-                            onClick={() => setTestNotesTab("paste")}
-                            className={`text-xs px-3 py-1 rounded-md cursor-pointer transition-all ${
-                              testNotesTab === "paste" ? "bg-primary text-white font-semibold" : "text-gray-500"
-                            }`}
-                          >
-                            Paste Text
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setTestNotesTab("upload")}
-                            className={`text-xs px-3 py-1 rounded-md cursor-pointer transition-all ${
-                              testNotesTab === "upload" ? "bg-primary text-white font-semibold" : "text-gray-500"
-                            }`}
-                          >
-                            Upload File
-                          </button>
-                        </div>
-
-                        {testNotesTab === "paste" ? (
-                          <textarea
-                            className="field text-xs"
-                            rows={4}
-                            placeholder="Paste lecture notes, study guide, or topic notes here..."
-                            value={testNotesText}
-                            onChange={(e) => setTestNotesText(e.target.value)}
-                          />
-                        ) : (
-                          <div className="card border-dashed p-4 text-center">
+                    {testMethod === "ai" && (
+                      <>
+                        <div>
+                          <label className="label">
+                            Number of Questions: <strong className="text-primary">{testQuestionCount}</strong>
+                          </label>
+                          <div className="flex items-center gap-3">
                             <input
-                              type="file"
-                              accept=".pdf,.docx,.txt,.md"
-                              onChange={(e) => setTestFile(e.target.files?.[0] || null)}
-                              className="hidden"
-                              id="dashboard-test-file-input"
+                              type="range"
+                              min={1}
+                              max={20}
+                              step={1}
+                              value={testQuestionCount}
+                              onChange={(e) => setTestQuestionCount(Number(e.target.value))}
+                              className="flex-1 cursor-pointer"
                             />
-                            <label htmlFor="dashboard-test-file-input" className="btn-secondary inline-block cursor-pointer text-xs py-1.5 px-3">
-                              Choose File (.pdf, .txt, .docx)
-                            </label>
-                            {testFile && <div className="text-xs mt-1.5 font-mono font-bold text-primary">{testFile.name}</div>}
+                            <input
+                              type="number"
+                              min={1}
+                              max={20}
+                              value={testQuestionCount}
+                              onChange={(e) => {
+                                const n = Number(e.target.value);
+                                if (Number.isFinite(n)) setTestQuestionCount(Math.min(20, Math.max(1, n)));
+                              }}
+                              className="field w-16 text-center py-1 text-xs"
+                            />
                           </div>
-                        )}
-                      </div>
-                    </>
-                  )}
+                        </div>
 
-                  <div>
-                    <label className="label">Participant Q&A</label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setTestQa(true)}
-                        className={`p-2 rounded-xl border text-left text-xs transition-all cursor-pointer ${
-                          testQa
-                            ? "border-emerald-500 bg-emerald-500/10 font-bold text-emerald-600 ring-1 ring-emerald-500/30"
-                            : "border-[#E1E1DC] dark:border-[#2A2E52] text-gray-400 opacity-75"
-                        }`}
-                      >
-                        <div className="font-semibold text-emerald-600 dark:text-emerald-400">✓ Enabled</div>
-                        <div className="text-[10px] text-gray-500">Students can ask questions</div>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setTestQa(false)}
-                        className={`p-2 rounded-xl border text-left text-xs transition-all cursor-pointer ${
-                          !testQa
-                            ? "border-primary bg-primary/10 font-bold text-primary ring-1 ring-primary/30"
-                            : "border-[#E1E1DC] dark:border-[#2A2E52] text-gray-400 opacity-75"
-                        }`}
-                      >
-                        <div className="font-semibold text-gray-900 dark:text-gray-100">✕ Disabled</div>
-                        <div className="text-[10px] text-gray-500">{testType === "poll" ? "Poll" : "Quiz"} questions only</div>
-                      </button>
+                        <div>
+                          <label className="label">Notes / Source Material *</label>
+                          <div className="flex bg-[#F5F5F2] dark:bg-[#0E1020] rounded-lg p-1 border border-[#E1E1DC] dark:border-[#2A2E52] mb-2 w-fit">
+                            <button
+                              type="button"
+                              onClick={() => setTestNotesTab("paste")}
+                              className={`text-xs px-3 py-1 rounded-md cursor-pointer transition-all ${
+                                testNotesTab === "paste" ? "bg-primary text-white font-semibold" : "text-gray-500"
+                              }`}
+                            >
+                              Paste Text
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setTestNotesTab("upload")}
+                              className={`text-xs px-3 py-1 rounded-md cursor-pointer transition-all ${
+                                testNotesTab === "upload" ? "bg-primary text-white font-semibold" : "text-gray-500"
+                              }`}
+                            >
+                              Upload File
+                            </button>
+                          </div>
+
+                          {testNotesTab === "paste" ? (
+                            <textarea
+                              className="field text-xs"
+                              rows={4}
+                              placeholder="Paste lecture notes, study guide, or topic notes here..."
+                              value={testNotesText}
+                              onChange={(e) => setTestNotesText(e.target.value)}
+                            />
+                          ) : (
+                            <div className="card border-dashed p-4 text-center">
+                              <input
+                                type="file"
+                                accept=".pdf,.docx,.txt,.md"
+                                onChange={(e) => setTestFile(e.target.files?.[0] || null)}
+                                className="hidden"
+                                id="dashboard-test-file-input"
+                              />
+                              <label htmlFor="dashboard-test-file-input" className="btn-secondary inline-block cursor-pointer text-xs py-1.5 px-3">
+                                Choose File (.pdf, .txt, .docx)
+                              </label>
+                              {testFile && <div className="text-xs mt-1.5 font-mono font-bold text-primary">{testFile.name}</div>}
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+
+                    <div>
+                      <label className="label">Participant Q&A</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setTestQa(true)}
+                          className={`p-2 rounded-xl border text-left text-xs transition-all cursor-pointer ${
+                            testQa
+                              ? "border-emerald-500 bg-emerald-500/10 font-bold text-emerald-600 ring-1 ring-emerald-500/30"
+                              : "border-[#E1E1DC] dark:border-[#2A2E52] text-gray-400 opacity-75"
+                          }`}
+                        >
+                          <div className="font-semibold text-emerald-600 dark:text-emerald-400">✓ Enabled</div>
+                          <div className="text-[10px] text-gray-500">Students can ask questions</div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTestQa(false)}
+                          className={`p-2 rounded-xl border text-left text-xs transition-all cursor-pointer ${
+                            !testQa
+                              ? "border-primary bg-primary/10 font-bold text-primary ring-1 ring-primary/30"
+                              : "border-[#E1E1DC] dark:border-[#2A2E52] text-gray-400 opacity-75"
+                          }`}
+                        >
+                          <div className="font-semibold text-gray-900 dark:text-gray-100">✕ Disabled</div>
+                          <div className="text-[10px] text-gray-500">{testType === "poll" ? "Poll" : "Quiz"} questions only</div>
+                        </button>
+                      </div>
                     </div>
+
+                    {testError && <div className="error-text text-xs">{testError}</div>}
                   </div>
 
-                  {testError && <div className="error-text text-xs">{testError}</div>}
-
-                  <div className="flex justify-end gap-2 pt-2">
+                  <div className="flex items-center justify-end gap-2 pt-3 mt-3 border-t border-[#E1E1DC] dark:border-[#2A2E52] shrink-0">
                     <button
                       type="button"
                       className="btn-secondary text-xs cursor-pointer"
@@ -1322,7 +1338,7 @@ export default function HostDashboard() {
                     <button
                       type="submit"
                       disabled={creatingTest}
-                      className="btn-primary text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white border-0 cursor-pointer shadow-sm"
+                      className="btn-primary text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white border-0 cursor-pointer shadow-sm disabled:opacity-60"
                     >
                       {creatingTest
                         ? "Processing…"
@@ -1339,72 +1355,78 @@ export default function HostDashboard() {
 
         {/* EDIT SESSION MODAL */}
         {editingSession && (
-          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="card max-w-md w-full p-6 shadow-xl animate-in fade-in zoom-in-95 duration-150">
-              <div className="flex justify-between items-center mb-4">
+          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+            <div className="card max-w-md w-full p-5 sm:p-6 shadow-xl rounded-2xl animate-in fade-in zoom-in-95 duration-150 my-auto max-h-[90vh] flex flex-col overflow-hidden">
+              <div className="flex justify-between items-center pb-3 border-b border-[#E1E1DC] dark:border-[#2A2E52] shrink-0 mb-3">
                 <h2 className="font-display font-bold text-lg">Edit Session</h2>
                 <button
                   type="button"
-                  className="text-gray-400 hover:text-gray-600 text-sm"
+                  className="text-gray-400 hover:text-gray-600 text-sm cursor-pointer p-1"
                   onClick={closeEditModal}
                 >
                   ✕
                 </button>
               </div>
 
-              <form onSubmit={handleSaveEdit}>
-                <label className="label">Session Name *</label>
-                <input
-                  className="field mb-3"
-                  value={editForm.title}
-                  autoFocus
-                  onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
-                />
-
-                <label className="label">Description</label>
-                <textarea
-                  className="field mb-3"
-                  rows={2}
-                  value={editForm.description}
-                  onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
-                />
-
-                <div className="grid grid-cols-2 gap-3 mb-4">
+              <form onSubmit={handleSaveEdit} className="flex flex-col flex-1 min-h-0">
+                <div className="overflow-y-auto flex-1 pr-1 space-y-3">
                   <div>
-                    <label className="label">Date & Time</label>
+                    <label className="label">Session Name *</label>
                     <input
-                      type="datetime-local"
-                      className="field text-xs"
-                      value={editForm.date}
-                      onChange={(e) => setEditForm({ ...editForm, date: e.target.value })}
+                      className="field"
+                      value={editForm.title}
+                      autoFocus
+                      onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
                     />
                   </div>
+
                   <div>
-                    <label className="label">Status</label>
-                    <select
-                      className="field text-xs"
-                      value={editForm.status}
-                      onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
-                    >
-                      <option value="draft">Draft</option>
-                      <option value="active">Active</option>
-                      <option value="closed">Closed</option>
-                    </select>
+                    <label className="label">Description</label>
+                    <textarea
+                      className="field"
+                      rows={2}
+                      value={editForm.description}
+                      onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                    />
                   </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="label">Date & Time</label>
+                      <input
+                        type="datetime-local"
+                        className="field text-xs"
+                        value={editForm.date}
+                        onChange={(e) => setEditForm({ ...editForm, date: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="label">Status</label>
+                      <select
+                        className="field text-xs"
+                        value={editForm.status}
+                        onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
+                      >
+                        <option value="draft">Draft</option>
+                        <option value="active">Active</option>
+                        <option value="closed">Closed</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {editError && <div className="error-text text-xs">{editError}</div>}
                 </div>
 
-                {editError && <div className="error-text mb-4">{editError}</div>}
-
-                <div className="flex justify-end gap-2">
+                <div className="flex items-center justify-end gap-2 pt-3 mt-3 border-t border-[#E1E1DC] dark:border-[#2A2E52] shrink-0">
                   <button
                     type="button"
-                    className="btn-secondary text-xs"
+                    className="btn-secondary text-xs cursor-pointer"
                     onClick={closeEditModal}
                     disabled={savingEdit}
                   >
                     Cancel
                   </button>
-                  <button type="submit" className="btn-primary text-xs" disabled={savingEdit}>
+                  <button type="submit" className="btn-primary text-xs font-bold" disabled={savingEdit}>
                     {savingEdit ? "Saving…" : "Save Changes"}
                   </button>
                 </div>

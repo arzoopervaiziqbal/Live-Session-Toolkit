@@ -20,6 +20,18 @@ const ParticipantUser = sequelize.define("ParticipantUser", {
     type: DataTypes.STRING,
     allowNull: false,
   },
+  phoneNumber: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+  authProvider: {
+    type: DataTypes.STRING,
+    defaultValue: "local",
+  },
+  googleId: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
 }, {
   tableName: "participant_users",
   timestamps: true,

@@ -526,8 +526,16 @@ async function getResults(req, res) {
       violations = p.proctorViolations;
     } else if (typeof p.proctorViolations === "string") {
       try {
-        violations = JSON.parse(p.proctorViolations) || [];
-      } catch (_) {}
+        const parsed = JSON.parse(p.proctorViolations);
+        violations = Array.isArray(parsed) ? parsed : [];
+      } catch (_) {
+        violations = [];
+      }
+    } else if (p.proctorViolations && typeof p.proctorViolations === "object") {
+      violations = Array.isArray(p.proctorViolations) ? p.proctorViolations : [];
+    }
+    if (!Array.isArray(violations)) {
+      violations = [];
     }
 
     const isDisqualified = p.status === "disqualified";
